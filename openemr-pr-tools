@@ -1,0 +1,10 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""Runs openemr_pr_tools from this checkout, without installing anything."""
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from openemr_pr_tools.__main__ import main  # noqa: E402
+
+sys.exit(main())

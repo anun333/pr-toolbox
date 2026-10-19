@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openemr-pr-tools"
+dynamic = ["version"]
+description = "Quiet, local tools for people who send pull requests to OpenEMR: landing order, PR health, and a pre-push check."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE", "LICENSES/*"]
+authors = [{ name = "anun333" }]
+classifiers = [
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Operating System :: POSIX",
+  "Programming Language :: Python :: 3",
+  "Topic :: Software Development :: Quality Assurance",
+]
+
+[project.urls]
+Homepage = "https://github.com/anun333/openemr-pr-tools"
+Issues = "https://github.com/anun333/openemr-pr-tools/issues"
+
+[project.scripts]
+openemr-pr-tools = "openemr_pr_tools.__main__:main"
+
+[tool.setuptools]
+packages = ["openemr_pr_tools"]
+
+[tool.setuptools.dynamic]
+version = { attr = "openemr_pr_tools.__version__" }

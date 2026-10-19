@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: CI
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        python: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: git can test-merge in memory (merge-tree --write-tree needs 2.38)
+        run: git --version
+      - name: Unit tests
+        run: python -m unittest discover -s tests -v
+      - name: Installs and runs
+        run: |
+          python -m pip install .
+          openemr-pr-tools --version
+          openemr-pr-tools --help
+          openemr-pr-tools check --help > /dev/null

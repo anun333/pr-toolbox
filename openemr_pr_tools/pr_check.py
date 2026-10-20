@@ -1,14 +1,13 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Pre-push check: what OpenEMR's CI will say about a branch, before it says it.
+"""Pre-push check: what a project's CI will say about a branch, before it says it.
 
-Run from an OpenEMR worktree whose dev stack (openemr-cmd's easy or easy-light) is up. In order:
-syntax, phpcs, rector and codespell on the changed files; the full PHPStan analysis with CI's
-configuration (with a capped number of workers); the changed test files; PHPStan's exact baseline
-caps on the branch merged onto master; the upgrade-script and v_database rules, including whether
-another open PR claims the same number; a scan of the diff for secret values; and commit trailers.
+Built-in steps work on any repository: the branch merges onto the base branch cleanly, codespell on
+the changed files, a scan of the diff for secret values, commit trailers, and the project profile's
+exact caps and version-number rules when it defines them. The profile's check_steps add the
+project's own commands (linters, static analysis, the changed tests), run on the host or in a
+container, once with all the matching changed files or once per file.
 
-It reads the worktree and GitHub and runs tools in the container. It never commits, pushes or
-comments.
+It reads the checkout and GitHub and runs commands. It never commits, pushes or comments.
 """
 
 from __future__ import annotations
@@ -21,148 +20,172 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .common import GITHUB_REPO, UPGRADE_FILE, caps_mismatches, gh, git, merged, open_prs, v_database
+from .common import (Target, add_target_arguments, caps_mismatches, gh, git, matches, merged, open_prs, resolve, version_claim)
 
-STEPS = ["php-lint", "phpcs", "rector", "codespell", "phpstan", "tests", "caps", "upgrade-sql", "v-database", "secrets", "trailers"]
+BUILT_IN_FIRST = ["merges"]
+BUILT_IN_LAST = ["codespell", "caps", "version", "version-claims", "secrets", "trailers"]
 
 
-def find_container(worktree: Path, app_dir: str) -> str:
-    """The running container that mounts this worktree at app_dir, as openemr-cmd's stacks do."""
+def find_container(repo: Path, app_dir: str) -> str | None:
+    """The running container that mounts this checkout at app_dir, as openemr-cmd's stacks do."""
     names = subprocess.run(["docker", "ps", "--format", "{{.Names}}"], capture_output=True, text=True).stdout.split()
     for name in names:
         mounts = subprocess.run(["docker", "inspect", "-f", "{{range .Mounts}}{{.Source}}|{{.Destination}}\n{{end}}", name],
                                 capture_output=True, text=True).stdout.splitlines()
-        if f"{worktree}|{app_dir}" in mounts:
+        if f"{repo}|{app_dir}" in mounts:
             return name
-    raise RuntimeError(f"no running container mounts {worktree} at {app_dir}; start the stack or pass --container")
+    return None
+
+
+def quoted(files: list[str]) -> str:
+    return " ".join("'" + f.replace("'", "'\\''") + "'" for f in files)
+
+
+def tail(text: str, lines: int) -> str:
+    return " | ".join(text.strip().splitlines()[-lines:])
 
 
 class Check:
-    def __init__(self, args: argparse.Namespace):
-        self.args = args
-        self.repo = Path(args.worktree).expanduser().resolve()
-        if args.container == "auto":
-            args.container = find_container(self.repo, args.app_dir)
-        self.base = args.base
+    def __init__(self, args: argparse.Namespace, target: Target):
+        self.args, self.target, self.config = args, target, target.config
+        self.repo = target.repo
+        self.base = target.base
         self.merge_base = git(self.repo, "merge-base", self.base, "HEAD", check=True).stdout.strip()
         tracked = git(self.repo, "diff", "--name-only", self.merge_base).stdout.split()
         untracked = git(self.repo, "ls-files", "--others", "--exclude-standard").stdout.split()
         self.changed = sorted({f for f in tracked + untracked if (self.repo / f).exists()})
-        self.deleted = sorted(set(tracked) - set(self.changed))
-        self.php = [f for f in self.changed if f.endswith(".php")]
+        self.app_dir = args.app_dir or (self.config.get("container") or {}).get("app_dir") or str(self.repo)
+        self._container: str | None = None if args.container in (None, "auto", "none") else args.container
 
-    def container(self, command: str, timeout: int = 1800) -> subprocess.CompletedProcess:
-        cmd = ["docker", "exec", "-w", self.args.app_dir, self.args.container, "sh", "-c", command]
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    @property
+    def container(self) -> str:
+        if self._container is None:
+            if self.args.container == "none":
+                raise RuntimeError("this step runs in a container, and --container none was given")
+            self._container = find_container(self.repo, self.app_dir)
+            if self._container is None:
+                raise RuntimeError(f"no running container mounts {self.repo} at {self.app_dir}; start it or pass --container NAME")
+        return self._container
 
-    @staticmethod
-    def quoted(files: list[str]) -> str:
-        return " ".join("'" + f.replace("'", "'\\''") + "'" for f in files)
+    def shell(self, step: dict, command: str, timeout: int) -> subprocess.CompletedProcess:
+        if step.get("where") == "container":
+            cmd = ["docker", "exec", "-w", self.app_dir, self.container, "sh", "-c", command]
+            return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return subprocess.run(["sh", "-c", command], cwd=self.repo, capture_output=True, text=True, timeout=timeout)
 
-    def php_lint(self) -> tuple[str, str]:
-        if not self.php:
-            return "skip", "no PHP files changed"
-        bad = []
-        for f in self.php:
-            r = self.container(f"php -l {self.quoted([f])}")
-            if r.returncode != 0:
-                bad.append(f"{f}: {(r.stdout + r.stderr).strip().splitlines()[-1]}")
-        return ("fail", "; ".join(bad)) if bad else ("pass", f"{len(self.php)} files")
+    def fill(self, text: str, files: list[str] | None = None, file: str | None = None) -> str:
+        values = {"app_dir": self.app_dir, "workers": str(self.args.workers), "base": self.base,
+                  "files": quoted(files or []), "file": quoted([file]) if file else ""}
+        return re.sub(r"\{(app_dir|workers|base|files|file)\}", lambda m: values[m.group(1)], text)
 
-    def phpcs(self) -> tuple[str, str]:
-        if not self.php:
-            return "skip", "no PHP files changed"
-        r = self.container(f"vendor/bin/phpcs --standard=phpcs.xml.dist -q --report=summary {self.quoted(self.php)}")
-        return ("pass", f"{len(self.php)} files") if r.returncode == 0 else ("fail", tail(r.stdout, 15))
+    def command_step(self, step: dict) -> tuple[str, str]:
+        pattern = step.get("each") or step.get("files")
+        files = [f for f in self.changed if (not pattern or matches(f, pattern)) and not matches(f, step.get("exclude"))]
+        if not files and not step.get("always"):
+            return "skip", f"no changed files match {pattern}"
+        if step.get("write"):
+            content = self.fill(step["write"]["content"])
+            path = step["write"]["path"]
+            if step.get("where") == "container":
+                done = subprocess.run(["docker", "exec", "-i", self.container, "sh", "-c", f"cat > {quoted([path])}"],
+                                      input=content, capture_output=True, text=True)
+                if done.returncode != 0:
+                    return "fail", f"couldn't write {path}: {done.stderr.strip()[:200]}"
+            else:
+                Path(path).write_text(content)
+        timeout = int(step.get("timeout", 1800))
+        fail_pattern = re.compile(step["fail_pattern"]) if step.get("fail_pattern") else None
 
-    def rector(self) -> tuple[str, str]:
-        if not self.php:
-            return "skip", "no PHP files changed"
-        r = self.container(f"vendor/bin/rector process --dry-run --no-progress-bar {self.quoted(self.php)}")
-        out = r.stdout + r.stderr
-        if re.search(r"would have (been )?changed|\d+ files? with changes", out):
-            return "fail", tail("\n".join(l for l in out.splitlines() if l.strip().startswith(("-", "+", "1)", "2)", "3)")) or out), 15)
-        return ("pass", "no changes") if "[OK]" in out else ("fail", tail(out, 10))
+        def passed(result: subprocess.CompletedProcess) -> bool:
+            return result.returncode == 0 and not (fail_pattern and fail_pattern.search(result.stdout + result.stderr))
+
+        if step.get("each"):
+            results, failed = [], False
+            for f in files:
+                result = self.shell(step, self.fill(step["run"], file=f), timeout)
+                ok = passed(result)
+                failed |= not ok
+                last = ((result.stdout + result.stderr).strip().splitlines() or ["(no output)"])[-1]
+                results.append(f"{f}: {last}" if not ok or step.get("verbose") else f"{f}: ok" if len(files) <= 3 else None)
+            shown = [r for r in results if r]
+            summary = "; ".join(shown) if shown else f"{len(files)} files"
+            return ("fail" if failed else "pass"), summary
+        result = self.shell(step, self.fill(step["run"], files=files), timeout)
+        if passed(result):
+            return "pass", "done (runs whatever changed)" if step.get("always") else f"{len(files)} files"
+        return "fail", tail(result.stdout + result.stderr, int(step.get("tail", 15)))
+
+    def merges(self) -> tuple[str, str]:
+        commit, conflicts = merged(self.repo, self.base, "HEAD")
+        return ("fail", f"conflicts with {self.base}: " + ", ".join(conflicts)) if commit is None else ("pass", f"merges onto {self.base}")
 
     def codespell(self) -> tuple[str, str]:
         if not shutil.which("codespell"):
             return "skip", "codespell isn't installed on this machine"
-        files = [f for f in self.changed if not f.startswith(".phpstan/")]
+        files = [f for f in self.changed if not matches(f, self.config.get("codespell_exclude"))]
         if not files:
             return "skip", "nothing to read"
-        r = subprocess.run(["codespell", *files], cwd=self.repo, capture_output=True, text=True)
-        return ("pass", f"{len(files)} files") if r.returncode == 0 else ("fail", tail(r.stdout, 15))
-
-    def phpstan(self) -> tuple[str, str]:
-        neon = (f"includes:\n  - {self.args.app_dir}/.phpstan/phpstan.ci.neon\n"
-                f"parameters:\n  parallel:\n    maximumNumberOfProcesses: {self.args.workers}\n")
-        write = subprocess.run(["docker", "exec", "-i", self.args.container, "sh", "-c", "cat > /tmp/openemr-pr-tools-phpstan.neon"],
-                               input=neon, capture_output=True, text=True)
-        if write.returncode != 0:
-            return "fail", f"couldn't write the PHPStan config: {write.stderr.strip()[:200]}"
-        r = self.container("php -d memory_limit=8G vendor/bin/phpstan --memory-limit=8G analyze -c /tmp/openemr-pr-tools-phpstan.neon "
-                           "--error-format=raw --no-progress", timeout=3600)
-        if r.returncode == 0:
-            return "pass", f"full analysis, CI configuration, {self.args.workers} workers"
-        return "fail", tail(r.stdout + r.stderr, 20)
-
-    def tests(self) -> tuple[str, str]:
-        files = [f for f in self.changed if f.startswith("tests/Tests/") and f.endswith("Test.php")]
-        if not files:
-            return "skip", "no test files changed"
-        results, failed = [], False
-        for f in files:
-            config = "phpunit-isolated.xml" if f.startswith("tests/Tests/Isolated/") else "phpunit.xml"
-            r = self.container(f"vendor/bin/phpunit -c {config} {self.quoted([f])}", timeout=3600)
-            last = (r.stdout.strip().splitlines() or ["(no output)"])[-1]
-            failed |= r.returncode != 0
-            results.append(f"{f}: {last}")
-        return ("fail" if failed else "pass"), "; ".join(results)
+        result = subprocess.run(["codespell", *files], cwd=self.repo, capture_output=True, text=True)
+        return ("pass", f"{len(files)} files") if result.returncode == 0 else ("fail", tail(result.stdout, 15))
 
     def caps(self) -> tuple[str, str]:
+        rule = self.config.get("exact_caps")
+        if not rule:
+            return "skip", "the profile pins no counts"
         commit, conflicts = merged(self.repo, self.base, "HEAD")
         if commit is None:
-            return "fail", "the branch conflicts with master: " + ", ".join(conflicts)
-        before = set(caps_mismatches(self.repo, self.base))
-        after = set(caps_mismatches(self.repo, commit))
-        new = sorted(after - before)
+            return "fail", "the branch conflicts with the base: " + ", ".join(conflicts)
+        new = sorted(set(caps_mismatches(self.repo, commit, rule)) - set(caps_mismatches(self.repo, self.base, rule)))
         note = " (committed work only)" if git(self.repo, "status", "--porcelain").stdout.strip() else ""
-        return ("fail", "; ".join(new) + note) if new else ("pass", "no exact cap off" + note)
+        return ("fail", "; ".join(new) + note) if new else ("pass", "no pinned count off" + note)
 
-    def upgrade_sql(self) -> tuple[str, str]:
-        sql = [f for f in self.changed if f.startswith("sql/")]
-        if not sql:
-            return "skip", "no SQL changed"
+    def working_claim(self, rule: dict) -> int | None:
+        path = self.repo / rule["file"]
+        match = re.search(rule["pattern"], path.read_text(errors="replace")) if path.exists() else None
+        return int(match.group(1)) if match else None
+
+    def version(self) -> tuple[str, str]:
+        rule = self.config.get("version_claims")
+        if not rule:
+            return "skip", "the profile has no version rule"
+        if not any(matches(f, rule.get("related", [rule["file"]]) + rule.get("bump_when", [])) for f in self.changed):
+            return "skip", "no versioned files changed"
         problems = []
-        for f in sql:
-            if UPGRADE_FILE.match(f):
-                text = (self.repo / f).read_text()
-                opens = len(re.findall(r"^#If", text, re.M))
-                ends = len(re.findall(r"^#EndIf", text, re.M))
-                if opens != ends:
-                    problems.append(f"{f}: {opens} #If blocks, {ends} #EndIf")
-        mine, theirs = working_v_database(self.repo), v_database(self.repo, self.base)
-        header = re.search(r"-- v_database: (\d+)", (self.repo / "sql/database.sql").read_text(errors="replace")) if (self.repo / "sql/database.sql").exists() else None
-        if mine is None or theirs is None or mine <= theirs:
-            problems.append(f"SQL changed but v_database is {mine}, not above master's {theirs}")
-        if header and mine is not None and int(header.group(1)) != mine:
-            problems.append(f"version.php says {mine}, database.sql's header {header.group(1)}")
-        return ("fail", "; ".join(problems)) if problems else ("pass", f"v_database {mine} (master {theirs}), upgrade blocks balanced")
+        blocks = rule.get("blocks")
+        for f in (f for f in self.changed if blocks and matches(f, blocks["files"])):
+            text = (self.repo / f).read_text(errors="replace")
+            opens, closes = len(re.findall(blocks["open"], text, re.M)), len(re.findall(blocks["close"], text, re.M))
+            if opens != closes:
+                problems.append(f"{f}: {opens} blocks opened, {closes} closed")
+        mine, theirs = self.working_claim(rule), version_claim(self.repo, self.base, rule)
+        noun = rule.get("noun", "the version")
+        if any(matches(f, rule.get("bump_when", [])) for f in self.changed) and (mine is None or theirs is None or mine <= theirs):
+            problems.append(f"{noun} is {mine}, not above the base's {theirs}")
+        for mirror in rule.get("mirrors", []):
+            path = self.repo / mirror["file"]
+            found = re.search(mirror["pattern"], path.read_text(errors="replace")) if path.exists() else None
+            if found and mine is not None and int(found.group(1)) != mine:
+                problems.append(f"{rule['file']} says {mine}, {mirror['file']} says {found.group(1)}")
+        return ("fail", "; ".join(problems)) if problems else ("pass", f"{noun} {mine} (base {theirs}), blocks balanced")
 
-    def v_database_claims(self) -> tuple[str, str]:
-        if "version.php" not in self.changed:
-            return "skip", "version.php unchanged"
-        mine = working_v_database(self.repo)
+    def version_claims(self) -> tuple[str, str]:
+        rule = self.config.get("version_claims")
+        if not rule:
+            return "skip", "the profile has no version rule"
+        if rule["file"] not in self.changed:
+            return "skip", f"{rule['file']} unchanged"
+        mine = self.working_claim(rule)
         head = git(self.repo, "rev-parse", "HEAD").stdout.strip()
         clashes = []
-        for pr in open_prs():
-            if "version.php" not in pr["paths"] or pr["headRefOid"] == head:
+        for pr in open_prs(self.target.github):
+            if rule["file"] not in pr["paths"] or pr["headRefOid"] == head:
                 continue
-            text = gh("api", f"repos/{GITHUB_REPO}/contents/version.php?ref={pr['headRefOid']}", "-H", "Accept: application/vnd.github.raw")
-            claim = re.search(r"\$v_database = (\d+);", text)
+            text = gh("api", f"repos/{self.target.github}/contents/{rule['file']}?ref={pr['headRefOid']}", "-H", "Accept: application/vnd.github.raw")
+            claim = re.search(rule["pattern"], text)
             if claim and int(claim.group(1)) == mine:
                 clashes.append(f"#{pr['number']} ({pr['author']})")
-        return ("fail", f"v_database {mine} is also claimed by " + ", ".join(clashes)) if clashes else ("pass", f"no other open PR claims {mine}")
+        noun = rule.get("noun", "version")
+        return ("fail", f"{noun} {mine} is also claimed by " + ", ".join(clashes)) if clashes else ("pass", f"no other open PR claims {mine}")
 
     def secrets(self) -> tuple[str, str]:
         if not self.args.secrets_env:
@@ -200,52 +223,56 @@ class Check:
                     problems.append(f"{sha} lacks /{pattern}/")
         return ("fail", "; ".join(problems)) if problems else ("pass", "commits follow the trailer rules")
 
-
-def working_v_database(repo: Path) -> int | None:
-    match = re.search(r"\$v_database = (\d+);", (repo / "version.php").read_text()) if (repo / "version.php").exists() else None
-    return int(match.group(1)) if match else None
-
-
-def tail(text: str, lines: int) -> str:
-    return " | ".join(text.strip().splitlines()[-lines:])
+    def plan(self) -> list[tuple[str, object]]:
+        built_in = {"merges": self.merges, "codespell": self.codespell, "caps": self.caps, "version": self.version,
+                    "version-claims": self.version_claims, "secrets": self.secrets, "trailers": self.trailers}
+        steps = [(name, built_in[name]) for name in BUILT_IN_FIRST]
+        steps += [(step["name"], (lambda s=step: self.command_step(s))) for step in self.config.get("check_steps", [])]
+        steps += [(name, built_in[name]) for name in BUILT_IN_LAST]
+        return steps
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="openemr-pr-tools check", description=__doc__.split("\n")[0])
-    parser.add_argument("--worktree", default=".", help="the OpenEMR worktree to check (default: .)")
-    parser.add_argument("--container", default="auto", help="the stack's OpenEMR container (default: the one that mounts the worktree)")
-    parser.add_argument("--app-dir", default="/var/www/localhost/htdocs/openemr", help="the worktree's path inside the container")
-    parser.add_argument("--base", default="upstream/master", help="what the branch is compared with (default: upstream/master)")
-    parser.add_argument("--workers", type=int, default=3, help="PHPStan's parallel workers (default: 3)")
+    parser = argparse.ArgumentParser(prog="pr-tools check", description=__doc__.split("\n")[0])
+    add_target_arguments(parser)
+    parser.add_argument("--worktree", help="the same as --repo")
+    parser.add_argument("--container", default="auto", help="container for the profile's container steps: auto (the one that mounts the checkout), a name, or none")
+    parser.add_argument("--app-dir", help="the checkout's path inside the container (default: the profile's, else the checkout's own path)")
+    parser.add_argument("--workers", type=int, default=3, help="{workers} in the profile's commands, such as PHPStan's processes (default: 3)")
     parser.add_argument("--secrets-env", help="KEY=VALUE file whose values must not appear in the diff")
     parser.add_argument("--public-keys", help="comma-separated keys in that file whose values are public")
     parser.add_argument("--forbid-trailer", action="append", help="regex no commit message may match (repeatable)")
     parser.add_argument("--require-trailer", action="append", help="regex every commit message must match (repeatable)")
-    parser.add_argument("--skip", default="", help=f"comma-separated steps to skip: {', '.join(STEPS)}")
+    parser.add_argument("--skip", default="", help="comma-separated step names to skip")
+    parser.add_argument("--list", action="store_true", help="list the steps the profile gives and exit")
     parser.add_argument("--json", action="store_true", help="print the results as JSON")
     args = parser.parse_args(argv)
-    check = Check(args)
+    if args.worktree and not args.repo:
+        args.repo = args.worktree
+    target = resolve(args)
+    check = Check(args, target)
+    plan = check.plan()
+    if args.list:
+        print(f"{target.github} ({target.config.get('name', 'no profile')}): " + ", ".join(name for name, _ in plan))
+        return 0
     skip = {s.strip() for s in args.skip.split(",") if s.strip()}
-    runners = {"php-lint": check.php_lint, "phpcs": check.phpcs, "rector": check.rector, "codespell": check.codespell,
-               "phpstan": check.phpstan, "tests": check.tests, "caps": check.caps, "upgrade-sql": check.upgrade_sql,
-               "v-database": check.v_database_claims, "secrets": check.secrets, "trailers": check.trailers}
     results = []
-    for step in STEPS:
-        if step in skip:
-            results.append({"step": step, "status": "skip", "detail": "skipped by --skip"})
+    for name, run in plan:
+        if name in skip:
+            results.append({"step": name, "status": "skip", "detail": "skipped by --skip"})
             continue
         try:
-            status, detail = runners[step]()
+            status, detail = run()
         except Exception as error:  # a step that can't run is a failure, not a pass
             status, detail = "fail", f"{type(error).__name__}: {error}"
-        results.append({"step": step, "status": status, "detail": detail})
+        results.append({"step": name, "status": status, "detail": detail})
         if not args.json:
-            print(f"{status.upper():5} {step:12} {detail}", flush=True)
+            print(f"{status.upper():5} {name:14} {detail}", flush=True)
     failed = [r["step"] for r in results if r["status"] == "fail"]
     if args.json:
-        print(json.dumps({"changed": check.changed, "results": results, "failed": failed}, indent=1))
+        print(json.dumps({"github": target.github, "base": target.base, "changed": check.changed, "results": results, "failed": failed}, indent=1))
     else:
-        print(f"\n{len(check.changed)} files changed against {args.base}; " + (f"FAILED: {', '.join(failed)}" if failed else "all checks passed or skipped"))
+        print(f"\n{len(check.changed)} files changed against {target.base}; " + (f"FAILED: {', '.join(failed)}" if failed else "all checks passed or skipped"))
     return 1 if failed else 0
 
 

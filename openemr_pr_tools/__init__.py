@@ -1,4 +1,4 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Quiet, local tools for people who send pull requests to OpenEMR."""
+"""Quiet, local tools for people who send pull requests: landing order, PR health and a pre-push check."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

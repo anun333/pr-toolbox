@@ -1,0 +1,8 @@
+{
+ "name": "openemr-pr-tools",
+ "description": "This repository's own checks, as an example of a profile for a project without a built-in one.",
+ "check_steps": [
+  {"name": "compile", "where": "host", "files": "*.py", "run": "python3 -m py_compile {files}"},
+  {"name": "unit-tests", "where": "host", "always": true, "run": "python3 -m unittest discover -s tests"}
+ ]
+}

@@ -1,0 +1,34 @@
+{
+ "name": "openemr",
+ "description": "OpenEMR (openemr/openemr): the database version in version.php, exact PHPStan baseline caps, and the checks its CI runs, in an openemr-cmd dev stack.",
+ "version_claims": {
+  "file": "version.php",
+  "pattern": "\\$v_database = (\\d+);",
+  "related": ["version.php", "sql/database.sql", "sql/*_upgrade.sql"],
+  "bump_when": ["sql/*"],
+  "mirrors": [{"file": "sql/database.sql", "pattern": "-- v_database: (\\d+)"}],
+  "blocks": {"files": ["sql/*_upgrade.sql"], "open": "^#If", "close": "^#EndIf"},
+  "noun": "`v_database`"
+ },
+ "exact_caps": {
+  "file": ".phpstan/fatal-baseline-caps.php",
+  "block": "'all' => \\[(.*?)\\]",
+  "entry": "'([\\w.]+\\.php)' => (\\d+)",
+  "counted": ".phpstan/baseline/{name}",
+  "marker": "$ignoreErrors[] = [",
+  "noun": "PHPStan cap"
+ },
+ "health_ignore": "^(codecov/.*|All Checks Passed)$",
+ "container": {"app_dir": "/var/www/localhost/htdocs/openemr"},
+ "codespell_exclude": [".phpstan/*"],
+ "check_steps": [
+  {"name": "php-lint", "where": "container", "each": "*.php", "run": "php -l {file}"},
+  {"name": "phpcs", "where": "container", "files": "*.php", "run": "vendor/bin/phpcs --standard=phpcs.xml.dist -q --report=summary {files}"},
+  {"name": "rector", "where": "container", "files": "*.php", "run": "vendor/bin/rector process --dry-run --no-progress-bar {files}", "fail_pattern": "would have (been )?changed|\\d+ files? with changes"},
+  {"name": "phpstan", "where": "container", "always": true,
+   "write": {"path": "/tmp/pr-tools-phpstan.neon", "content": "includes:\n  - {app_dir}/.phpstan/phpstan.ci.neon\nparameters:\n  parallel:\n    maximumNumberOfProcesses: {workers}\n"},
+   "run": "php -d memory_limit=8G vendor/bin/phpstan --memory-limit=8G analyze -c /tmp/pr-tools-phpstan.neon --error-format=raw --no-progress", "timeout": 3600},
+  {"name": "tests-isolated", "where": "container", "each": "tests/Tests/Isolated/*Test.php", "run": "vendor/bin/phpunit -c phpunit-isolated.xml {file}", "timeout": 3600},
+  {"name": "tests", "where": "container", "each": "tests/Tests/*Test.php", "exclude": ["tests/Tests/Isolated/*"], "run": "vendor/bin/phpunit -c phpunit.xml {file}", "timeout": 3600}
+ ]
+}

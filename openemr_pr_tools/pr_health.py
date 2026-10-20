@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """PR health: what changed on your open PRs since the last look.
 
-For each open PR of yours it records the CI result (leaving out Codecov and the summary job by
-default), whether GitHub says it conflicts with master, review threads whose last word isn't
+For each open PR of yours it records the CI result (leaving out Codecov by default, and any jobs the
+project profile names), whether GitHub says it conflicts with the base branch, review threads whose last word isn't
 yours, the review decision, and, for drafts that wait on other PRs, whether those landed. It
 reports only what changed since the previous run, including PRs that were merged or closed.
 
@@ -18,7 +18,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .common import GITHUB_REPO, current_login, gh_json
+from .common import add_target_arguments, current_login, gh_json, resolve
 
 QUERY = """query($q: String!, $cursor: String) { search(query: $q, type: ISSUE, first: 25, after: $cursor) {
   pageInfo { hasNextPage endCursor }
@@ -27,15 +27,15 @@ QUERY = """query($q: String!, $cursor: String) { search(query: $q, type: ISSUE, 
       __typename ... on CheckRun { name conclusion status } ... on StatusContext { context state } } } } } } }
     reviewThreads(first: 100) { nodes { isResolved isOutdated comments(last: 1) { nodes { author { login } url } } } } } } } }"""
 
-DEFAULT_IGNORE = r"^(codecov/.*|All Checks Passed)$"
+DEFAULT_IGNORE = r"^codecov/"
 FAILED = {"FAILURE", "TIMED_OUT", "STARTUP_FAILURE", "ACTION_REQUIRED", "ERROR"}
 PENDING = {"PENDING", "EXPECTED", "QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED"}
 
 
-def snapshot(author: str, ignore: re.Pattern) -> dict[str, dict]:
+def snapshot(github: str, author: str, ignore: re.Pattern) -> dict[str, dict]:
     prs, cursor = {}, None
     while True:
-        args = ["api", "graphql", "-f", f"query={QUERY}", "-f", f"q=repo:{GITHUB_REPO} is:pr is:open author:{author}"]
+        args = ["api", "graphql", "-f", f"query={QUERY}", "-f", f"q=repo:{github} is:pr is:open author:{author}"]
         if cursor:
             args += ["-f", f"cursor={cursor}"]
         page = gh_json(*args)["data"]["search"]
@@ -87,14 +87,14 @@ def carry_mergeable(previous: dict, current: dict) -> None:
             now["mergeable"] = before["mergeable"]
 
 
-def closed_state(number: str) -> str:
-    pr = gh_json("api", f"repos/{GITHUB_REPO}/pulls/{number}")
+def closed_state(github: str, number: str) -> str:
+    pr = gh_json("api", f"repos/{github}/pulls/{number}")
     if pr.get("merged_at"):
         return f"merged by {(pr.get('merged_by') or {}).get('login', '?')}"
     return "closed" if pr.get("state") == "closed" else "open"
 
 
-def events(previous: dict, current: dict, notes: dict) -> list[dict]:
+def events(previous: dict, current: dict, notes: dict, github: str = "") -> list[dict]:
     """What changed, one event per PR and kind."""
     out = []
     old = previous.get("prs", {})
@@ -109,9 +109,9 @@ def events(previous: dict, current: dict, notes: dict) -> list[dict]:
         elif now["ci"] == "passing" and before["ci"] == "failing":
             out.append({"pr": n, "kind": "ci", "text": "CI passing again"})
         if now["mergeable"] == "CONFLICTING" and before["mergeable"] != "CONFLICTING":
-            out.append({"pr": n, "kind": "conflict", "text": "conflicts with master: needs a rebase"})
+            out.append({"pr": n, "kind": "conflict", "text": "conflicts with the base branch: needs a rebase"})
         elif now["mergeable"] == "MERGEABLE" and before["mergeable"] == "CONFLICTING":
-            out.append({"pr": n, "kind": "conflict", "text": "merges with master again"})
+            out.append({"pr": n, "kind": "conflict", "text": "merges with the base branch again"})
         new_people = set(now["waiting_people"]) - set(before["waiting_people"])
         new_bots = set(now["waiting_bots"]) - set(before["waiting_bots"])
         if new_people:
@@ -123,7 +123,7 @@ def events(previous: dict, current: dict, notes: dict) -> list[dict]:
     merged = set()
     for n in old:
         if n not in current:
-            state = closed_state(n)
+            state = closed_state(github or previous.get("github", ""), n)
             if state == "open":  # gone from search for a moment, not closed
                 continue
             out.append({"pr": n, "kind": "closed", "text": state})
@@ -140,12 +140,14 @@ def events(previous: dict, current: dict, notes: dict) -> list[dict]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="openemr-pr-tools health", description=__doc__.split("\n")[0])
+    parser = argparse.ArgumentParser(prog="pr-tools health", description=__doc__.split("\n")[0])
+    add_target_arguments(parser)
     parser.add_argument("--author", help="GitHub login whose PRs to watch (default: the gh login)")
-    parser.add_argument("--state-dir", default=".openemr-pr-tools", help="where the last snapshot is kept")
+    parser.add_argument("--state-dir", default=".pr-tools", help="where the last snapshot is kept (default: .pr-tools)")
     parser.add_argument("--notes", help="per-PR notes with depends_on lists (default: <state-dir>/landing-order-notes.json)")
-    parser.add_argument("--ignore", default=DEFAULT_IGNORE, help=f"regex of check names to leave out (default: {DEFAULT_IGNORE})")
+    parser.add_argument("--ignore", help=f"regex of check names to leave out (default: the profile's health_ignore, else {DEFAULT_IGNORE})")
     args = parser.parse_args(argv)
+    target = resolve(args, need_checkout=False)
     state = Path(args.state_dir).expanduser()
     state.mkdir(parents=True, exist_ok=True)
     path = state / "pr-health.json"
@@ -153,11 +155,13 @@ def main(argv: list[str] | None = None) -> int:
     previous = json.loads(path.read_text()) if path.exists() else {}
     notes = json.loads(notes_path.read_text()) if notes_path.exists() else {}
     author = args.author or current_login()
-    current = snapshot(author, re.compile(args.ignore))
+    ignore = re.compile(args.ignore or target.config.get("health_ignore") or DEFAULT_IGNORE)
+    current = snapshot(target.github, author, ignore)
     carry_mergeable(previous, current)
-    found = events(previous, current, notes)
-    path.write_text(json.dumps({"checked": datetime.now(timezone.utc).isoformat(timespec="seconds"), "author": author, "prs": current}, indent=1) + "\n")
-    print(json.dumps({"prs": len(current), "events": found}, indent=1))
+    found = events(previous, current, notes, target.github)
+    path.write_text(json.dumps({"checked": datetime.now(timezone.utc).isoformat(timespec="seconds"), "github": target.github,
+                                "author": author, "prs": current}, indent=1) + "\n")
+    print(json.dumps({"github": target.github, "prs": len(current), "events": found}, indent=1))
     return 0
 
 

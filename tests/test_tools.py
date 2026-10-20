@@ -36,27 +36,50 @@ def commit(path: Path, files: dict[str, str], message: str) -> None:
 
 
 CAPS = "<?php\nreturn ['all' => [\n    'argument.type.php' => 2,\n]];\n"
+OPENEMR = common.load_config(Path("."), "openemr/openemr", preset="openemr")
+CAPS_RULE, VERSION_RULE = OPENEMR["exact_caps"], OPENEMR["version_claims"]
 BASELINE = "<?php\n$ignoreErrors[] = [1];\n$ignoreErrors[] = [2];\n"
 
 
 class CommonTest(unittest.TestCase):
-    def test_a_version_conflict_is_only_the_version_files_and_upgrade_scripts(self):
-        self.assertTrue(common.is_version_conflict(["version.php", "sql/database.sql", "sql/8_4_1-to-8_5_0_upgrade.sql"]))
-        self.assertFalse(common.is_version_conflict(["version.php", "src/Services/TaskService.php"]))
-        self.assertFalse(common.is_version_conflict([]))
+    def test_a_version_conflict_is_only_the_files_that_go_with_the_number(self):
+        self.assertTrue(common.is_version_conflict(["version.php", "sql/database.sql", "sql/8_4_1-to-8_5_0_upgrade.sql"], VERSION_RULE))
+        self.assertFalse(common.is_version_conflict(["version.php", "src/Services/TaskService.php"], VERSION_RULE))
+        self.assertFalse(common.is_version_conflict([], VERSION_RULE))
+        self.assertFalse(common.is_version_conflict(["version.php"], None), "no rule, no version conflicts")
+
+    def test_the_github_repository_comes_from_the_remote(self):
+        self.assertEqual("openemr/openemr", common.github_of("https://github.com/openemr/openemr.git"))
+        self.assertEqual("me/tool", common.github_of("git@github.com:me/tool.git"))
+        self.assertEqual("me/tool", common.github_of("https://github.com/me/tool/"))
+        self.assertIsNone(common.github_of("https://gitlab.com/me/tool.git"))
+
+    def test_a_profile_is_chosen_by_file_then_preset_then_repository(self):
+        repo = repo_with({"README": "x"})
+        self.assertEqual("openemr", common.load_config(repo, "OpenEMR/openemr").get("name"))
+        self.assertEqual({}, common.load_config(repo, "someone/else"))
+        (repo / common.CONFIG_NAME).write_text('{"name": "mine"}')
+        self.assertEqual("mine", common.load_config(repo, "openemr/openemr").get("name"))
+        self.assertEqual("openemr", common.load_config(repo, "someone/else", preset="openemr").get("name"))
+
+    def test_patterns_match_paths(self):
+        self.assertTrue(common.matches("tests/Tests/Isolated/A/BTest.php", "tests/Tests/Isolated/*Test.php"))
+        self.assertTrue(common.matches("src/x.php", ["*.js", "*.php"]))
+        self.assertFalse(common.matches("src/x.php", None))
 
     def test_merge_tree_names_are_kept_and_messages_dropped(self):
         lines = ["src/A.php", "src/A.php", "Auto-merging src/A.php", "CONFLICT (content): Merge conflict in src/A.php", ""]
         self.assertEqual(["src/A.php"], common.conflicted_files(lines))
 
     def test_caps_count_the_entries_of_each_capped_file(self):
-        repo = repo_with({common.CAPS_FILE: CAPS, ".phpstan/baseline/argument.type.php": BASELINE})
-        self.assertEqual([], common.caps_mismatches(repo, "HEAD"))
+        repo = repo_with({CAPS_RULE["file"]: CAPS, ".phpstan/baseline/argument.type.php": BASELINE})
+        self.assertEqual([], common.caps_mismatches(repo, "HEAD", CAPS_RULE))
         commit(repo, {".phpstan/baseline/argument.type.php": "<?php\n$ignoreErrors[] = [1];\n"}, "drop one")
-        self.assertEqual(["argument.type: cap 2, entries 1"], common.caps_mismatches(repo, "HEAD"))
+        self.assertEqual(["argument.type: cap 2, entries 1"], common.caps_mismatches(repo, "HEAD", CAPS_RULE))
+        self.assertEqual([], common.caps_mismatches(repo, "HEAD", None), "no rule, nothing pinned")
 
     def test_a_tree_without_caps_has_none_off(self):
-        self.assertEqual([], common.caps_mismatches(repo_with({"README": "x"}), "HEAD"))
+        self.assertEqual([], common.caps_mismatches(repo_with({"README": "x"}), "HEAD", CAPS_RULE))
 
     def test_merged_reports_conflicts_and_merges_cleanly_otherwise(self):
         repo = repo_with({"a.txt": "one\n", "b.txt": "one\n"})
@@ -80,19 +103,21 @@ def entry(**over) -> dict:
     return base
 
 
-RESULT = {"checked": "2026-10-19T22:00:00+00:00", "master": "7846cf5c12aaaa", "author": "me", "open_prs": 3, "ours": {}, "v_database_claims": {}}
+RESULT = {"checked": "2026-10-19T22:00:00+00:00", "master": "7846cf5c12aaaa", "base_branch": "master", "github": "openemr/openemr", "author": "me",
+          "open_prs": 3, "ours": {}, "v_database_claims": {}, "version_noun": "`v_database`", "version_file": "version.php",
+          "version_related": VERSION_RULE["related"], "caps_noun": "PHPStan cap"}
 
 
 class LandingOrderTest(unittest.TestCase):
     def test_an_independent_pr(self):
         line = landing_order.sentence("1", entry(), RESULT, {})
         self.assertTrue(line.startswith("**Landing order:** independent. No open PR conflicts with it."))
-        self.assertIn("master 7846cf5c12 ", line)
+        self.assertIn("against master 7846cf5c12 and every open PR", line)
 
     def test_version_conflicts_are_grouped_and_others_named(self):
         e = entry(v_database=558, conflicts={"20": ["version.php", "sql/database.sql"], "30": ["src/Foo.php"]})
         line = landing_order.sentence("1", e, RESULT, {})
-        self.assertIn("takes `v_database` 558. It conflicts there and in `version.php` with #20", line)
+        self.assertIn("It takes `v_database` 558, and it conflicts with #20 only over that number (in `version.php`", line)
         self.assertIn("It conflicts with #30 in `src/Foo.php`.", line)
         self.assertNotIn("independent", line)
 
@@ -103,6 +128,11 @@ class LandingOrderTest(unittest.TestCase):
         draft_line = landing_order.sentence("9", entry(conflicts={"1": ["src/A.php"]}), RESULT, notes)
         self.assertIn("It carries copies of #1's commits.", draft_line)
         self.assertNotIn("It conflicts with #1", draft_line)
+
+    def test_without_a_version_rule_every_conflict_is_named(self):
+        generic = dict(RESULT, version_file="", version_related=[])
+        line = landing_order.sentence("1", entry(conflicts={"20": ["version.php"]}), generic, {})
+        self.assertIn("It conflicts with #20 in `version.php`.", line)
 
     def test_caps_and_clean_shares_are_mentioned(self):
         line = landing_order.sentence("1", entry(caps=[5], clean_with_ours={"6": ["src/B.php"]}), RESULT, {})
@@ -137,7 +167,7 @@ def thread(who: str, resolved=False, outdated=False) -> dict:
     return {"isResolved": resolved, "isOutdated": outdated, "comments": {"nodes": [{"author": {"login": who}, "url": f"url-{who}"}]}}
 
 
-IGNORE = re.compile(pr_health.DEFAULT_IGNORE)
+IGNORE = re.compile(OPENEMR["health_ignore"])
 
 
 class PrHealthTest(unittest.TestCase):
@@ -146,6 +176,10 @@ class PrHealthTest(unittest.TestCase):
         self.assertEqual(("passing", []), (pr["ci"], pr["failing"]))
         pr = pr_health.summarize(node(commits=checks(("phpstan", "FAILURE"), ("e2e", "CANCELLED"))), "me", IGNORE)
         self.assertEqual(("failing", ["phpstan"], 1), (pr["ci"], pr["failing"], pr["cancelled"]))
+
+    def test_without_a_profile_only_codecov_is_left_out(self):
+        pr = pr_health.summarize(node(commits=checks(("codecov/patch", "FAILURE"), ("All Checks Passed", "FAILURE"))), "me", re.compile(pr_health.DEFAULT_IGNORE))
+        self.assertEqual(["All Checks Passed"], pr["failing"])
 
     def test_threads_wait_when_the_last_word_is_someone_elses_and_open(self):
         threads = {"nodes": [thread("reviewer"), thread("coderabbitai[bot]"), thread("me"), thread("old", resolved=True), thread("x", outdated=True)]}
@@ -182,12 +216,14 @@ class PrHealthTest(unittest.TestCase):
 
 
 class PrCheckTest(unittest.TestCase):
-    def check_for(self, repo: Path, **over) -> pr_check.Check:
-        args = argparse.Namespace(worktree=str(repo), container="none", app_dir="/app", base="master", workers=1, secrets_env=None,
-                                  public_keys=None, forbid_trailer=None, require_trailer=None)
+    def check_for(self, repo: Path, config: dict | None = None, **over) -> pr_check.Check:
+        args = argparse.Namespace(container="none", app_dir=None, workers=1, secrets_env=None, public_keys=None,
+                                  forbid_trailer=None, require_trailer=None)
         for k, v in over.items():
             setattr(args, k, v)
-        return pr_check.Check(args)
+        subprocess.run(["git", "-C", str(repo), "update-ref", "refs/remotes/origin/master", "master"], check=True)
+        target = common.Target(repo, "origin", "me/tool", "master", OPENEMR if config is None else config)
+        return pr_check.Check(args, target)
 
     def branch(self, files: dict[str, str], base_files: dict[str, str] | None = None, message: str = "change") -> Path:
         repo = repo_with(base_files or {"version.php": "<?php\n$v_database = 554;\n", "sql/database.sql": "-- v_database: 554\n"})
@@ -197,13 +233,39 @@ class PrCheckTest(unittest.TestCase):
 
     def test_sql_needs_a_higher_matching_v_database_and_balanced_blocks(self):
         repo = self.branch({"sql/8_4_1-to-8_5_0_upgrade.sql": "#IfNotTable t\nCREATE TABLE t (id int);\n"})
-        status, detail = self.check_for(repo).upgrade_sql()
+        status, detail = self.check_for(repo).version()
         self.assertEqual("fail", status)
-        self.assertIn("1 #If blocks, 0 #EndIf", detail)
-        self.assertIn("not above master's 554", detail)
+        self.assertIn("1 blocks opened, 0 closed", detail)
+        self.assertIn("is 554, not above the base's 554", detail)
         repo = self.branch({"sql/8_4_1-to-8_5_0_upgrade.sql": "#IfNotTable t\nCREATE TABLE t (id int);\n#EndIf\n",
                             "version.php": "<?php\n$v_database = 555;\n", "sql/database.sql": "-- v_database: 555\n"})
-        self.assertEqual("pass", self.check_for(repo).upgrade_sql()[0])
+        self.assertEqual("pass", self.check_for(repo).version()[0])
+        self.assertEqual("skip", self.check_for(repo, config={}).version()[0], "no profile, no version rule")
+
+    def test_project_steps_run_on_the_host_with_their_files(self):
+        repo = self.branch({"a.txt": "fine\n", "b.txt": "bad word\n", "c.md": "bad\n"})
+        steps = {"check_steps": [
+            {"name": "all-at-once", "files": "*.txt", "run": "! grep -l bad {files}"},
+            {"name": "per-file", "each": "*.txt", "run": "! grep -q bad {file}"},
+            {"name": "pattern", "files": "*.txt", "run": "cat {files}", "fail_pattern": "bad"},
+            {"name": "nothing-matches", "files": "*.py", "run": "false"},
+        ]}
+        check = self.check_for(repo, config=steps)
+        results = {name: run() for name, run in check.plan()}
+        self.assertEqual("fail", results["all-at-once"][0])
+        self.assertEqual("fail", results["per-file"][0])
+        self.assertIn("a.txt:", results["per-file"][1])
+        self.assertEqual("fail", results["pattern"][0])
+        self.assertEqual("skip", results["nothing-matches"][0])
+        self.assertEqual("pass", results["merges"][0])
+        self.assertEqual(["merges", "all-at-once", "per-file", "pattern", "nothing-matches", "codespell", "caps", "version", "version-claims", "secrets", "trailers"],
+                         [name for name, _ in check.plan()])
+
+    def test_a_container_step_without_a_container_fails(self):
+        repo = self.branch({"a.php": "<?php\n"})
+        check = self.check_for(repo, config={"check_steps": [{"name": "lint", "where": "container", "each": "*.php", "run": "php -l {file}"}]})
+        with self.assertRaises(RuntimeError):
+            check.command_step(check.config["check_steps"][0])
 
     def test_secrets_in_the_diff_are_named_by_key(self):
         repo = self.branch({"notes.txt": "token s3cr3tvalue here\nhandle public-name\n"})

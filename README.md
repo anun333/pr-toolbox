@@ -1,29 +1,29 @@
-# openemr-pr-tools
+# pr-toolbox
 
 Quiet, local tools for people who send pull requests to a busy GitHub project:
 
 | Command | What it answers |
 |---|---|
-| `pr-tools landing` | Which open PRs does each of my PRs conflict with, and in what order should they land? |
-| `pr-tools health` | What changed on my open PRs since I last looked: CI, conflicts with the base branch, review threads, merges? |
-| `pr-tools check` | What will the project's CI say about this branch, before I push it? |
+| `pr-toolbox landing` | Which open PRs does each of my PRs conflict with, and in what order should they land? |
+| `pr-toolbox health` | What changed on my open PRs since I last looked: CI, conflicts with the base branch, review threads, merges? |
+| `pr-toolbox check` | What will the project's CI say about this branch, before I push it? |
 
 Large projects can have hundreds of open pull requests and a few volunteers to review them. These tools help a contributor:
 - arrive with a branch that's green the first time;
 - say up front what their PR conflicts with;
 - notice what changed on their PRs.
 
-They work on any GitHub repository. The repository's name came from its first user, [OpenEMR](https://github.com/openemr/openemr), and OpenEMR still has a built-in profile (see [The OpenEMR profile](#the-openemr-profile)). The command is installed both as `pr-tools` and as `openemr-pr-tools`.
+They work on any GitHub repository. They were first written for [OpenEMR](https://github.com/openemr/openemr), which has a built-in profile (see [The OpenEMR profile](#the-openemr-profile)). The command is `pr-toolbox`. `pr-tools` and `openemr-pr-tools`, its names before 0.3.0, also work.
 
 They don't comment, label, ping or re-run anything on GitHub. `health` and `check` only read. `landing` reads too, unless you pass `--apply` or `--rewrite`. Then it rewrites the first paragraph of your own PRs' descriptions, and only when the facts behind that paragraph changed. Editing a description sends nobody a notification.
 
 ## Install
 
 ```
-pipx install git+https://github.com/anun333/openemr-pr-tools@v0.2.0
+pipx install git+https://github.com/anun333/pr-toolbox@v0.3.0
 ```
 
-Or clone the repository and run `./openemr-pr-tools` from it; nothing needs installing.
+Or clone the repository and run `./pr-toolbox` from it; nothing needs installing.
 
 **Requirements**
 - Python 3.10 or later.
@@ -36,21 +36,21 @@ Or clone the repository and run `./openemr-pr-tools` from it; nothing needs inst
 
 Run the commands inside a clone of the project, or point at one:
 
-- **The checkout:** `--repo DIR`, else `$PR_TOOLS_REPO`, else the repository you're in.
-- **The remote:** `--remote NAME`, else `$PR_TOOLS_REMOTE`, else `upstream` if the clone has one, else `origin`. Branches and PR heads are fetched from it.
-- **The GitHub repository:** `--github-repo owner/name`, else `$PR_TOOLS_GITHUB_REPO`, else read from the remote's URL.
-- **The base branch:** `--base-branch NAME`, else `$PR_TOOLS_BASE_BRANCH`, else the remote's default branch.
+- **The checkout:** `--repo DIR`, else `$PR_TOOLBOX_REPO`, else the repository you're in.
+- **The remote:** `--remote NAME`, else `$PR_TOOLBOX_REMOTE`, else `upstream` if the clone has one, else `origin`. Branches and PR heads are fetched from it.
+- **The GitHub repository:** `--github-repo owner/name`, else `$PR_TOOLBOX_GITHUB_REPO`, else read from the remote's URL.
+- **The base branch:** `--base-branch NAME`, else `$PR_TOOLBOX_BASE_BRANCH`, else the remote's default branch.
 
-So in a fork cloned with an `upstream` remote, `pr-tools landing` compares your PRs with the upstream project's open PRs and default branch, without any options.
+So in a fork cloned with an `upstream` remote, `pr-toolbox landing` compares your PRs with the upstream project's open PRs and default branch, without any options.
 
-`OPENEMR_REPO` and `OPENEMR_GITHUB_REPO`, from version 0.1, still work as fallbacks.
+The older names still work as fallbacks: `PR_TOOLS_*` from 0.2, and `OPENEMR_REPO` and `OPENEMR_GITHUB_REPO` from 0.1.
 
 ## Project profiles
 
 A profile tells the tools a project's own rules and CI commands. They look for one in this order:
 1. `--config FILE`;
 2. `--preset NAME`, a built-in profile;
-3. `.pr-tools.json` at the top of the checkout;
+3. `.pr-toolbox.json` at the top of the checkout (or `.pr-tools.json`, its name in 0.2);
 4. the built-in profile for the GitHub repository, if there is one (only `openemr/openemr` so far).
 
 Without a profile you still get:
@@ -71,7 +71,7 @@ A profile is a JSON object; every key is optional:
 | `version_claims` | `landing`, `check` | a version number that every schema change takes; see below |
 | `exact_caps` | `landing`, `check` | counts that one file pins exactly; see below |
 
-This repository's own [`.pr-tools.json`](.pr-tools.json) is a small example.
+This repository's own [`.pr-toolbox.json`](.pr-toolbox.json) is a small example.
 
 ### `check_steps`
 
@@ -134,9 +134,9 @@ Some projects pin counts exactly, for example how many baseline entries a static
 ## `landing`: landing order
 
 ```
-pr-tools landing [--author LOGIN] [--state-dir DIR] [--if-due] [--apply]
-pr-tools landing --show 14708           # the line the last check gives PR 14708
-pr-tools landing --rewrite 14708 14711  # put those lines at the top of those PRs' descriptions
+pr-toolbox landing [--author LOGIN] [--state-dir DIR] [--if-due] [--apply]
+pr-toolbox landing --show 14708           # the line the last check gives PR 14708
+pr-toolbox landing --rewrite 14708 14711  # put those lines at the top of those PRs' descriptions
 ```
 
 For each of your open PRs it merges the PR onto the base branch in memory. It then test-merges the result with every open PR that changes any of the same files. It reports three kinds of trouble:
@@ -147,7 +147,7 @@ For each of your open PRs it merges the PR onto the base branch in memory. It th
 
 PRs that already conflict with the base branch are left out of each comparison. They have to rebase before they can land, and what they'll conflict with after that can't be known yet.
 
-It writes `landing-order.md` and `landing-order.json` in the state directory (`.pr-tools/` by default) and prints a JSON summary. With `--if-due` it does nothing unless the base branch or one of your PR heads moved since the last check. A full check of 20 PRs against 300 open ones takes a minute or two in one process.
+It writes `landing-order.md` and `landing-order.json` in the state directory (`.pr-toolbox/` by default) and prints a JSON summary. With `--if-due` it does nothing unless the base branch or one of your PR heads moved since the last check. A full check of 20 PRs against 300 open ones takes a minute or two in one process.
 
 **The line** it writes reads like this:
 
@@ -173,7 +173,7 @@ It writes `landing-order.md` and `landing-order.json` in the state directory (`.
 ## `health`: what changed on your PRs
 
 ```
-pr-tools health [--author LOGIN] [--state-dir DIR] [--ignore REGEX]
+pr-toolbox health [--author LOGIN] [--state-dir DIR] [--ignore REGEX]
 ```
 
 It keeps a snapshot of your open PRs and prints, as JSON, what changed since the last one:
@@ -189,7 +189,7 @@ GitHub often reports mergeability as unknown until it has computed it, so an unk
 ## `check`: before you push
 
 ```
-pr-tools check [--list] [--container auto|NAME|none] [--app-dir DIR] [--workers 3] \
+pr-toolbox check [--list] [--container auto|NAME|none] [--app-dir DIR] [--workers 3] \
     [--secrets-env FILE --public-keys KEY,KEY] \
     [--forbid-trailer REGEX] [--require-trailer REGEX] [--skip STEP,…] [--json]
 ```
@@ -214,7 +214,7 @@ A step that can't run counts as a failure, not a pass. The exit code is 1 when a
 
 ## The OpenEMR profile
 
-The built-in [`openemr`](openemr_pr_tools/presets/openemr.json) profile is what the tools were first written for, and it's a worked example of every key. For a clone of `openemr/openemr` it's used automatically.
+The built-in [`openemr`](pr_toolbox/presets/openemr.json) profile is what the tools were first written for, and it's a worked example of every key. For a clone of `openemr/openemr` it's used automatically.
 
 - **`version_claims`**: `$v_database` in `version.php`. Every SQL change takes the next number, mirrored in the header of `sql/database.sql`. `#If…`/`#EndIf` blocks in the upgrade scripts must balance.
 - **`exact_caps`**: `.phpstan/fatal-baseline-caps.php`, which pins some PHPStan baseline counts exactly.
@@ -228,7 +228,7 @@ The built-in [`openemr`](openemr_pr_tools/presets/openemr.json) profile is what 
 OpenEMR asks that AI-assisted commits say so, for example:
 
 ```
-pr-tools check --require-trailer '^Assisted-by: ' --forbid-trailer '^Co-Authored-By: Claude'
+pr-toolbox check --require-trailer '^Assisted-by: ' --forbid-trailer '^Co-Authored-By: Claude'
 ```
 
 ## Running them on a schedule
@@ -238,7 +238,7 @@ pr-tools check --require-trailer '^Assisted-by: ' --forbid-trailer '^Co-Authored
 - run `landing --if-due` every hour;
 - run `landing --apply` by hand when its report shows a change you want on your PRs.
 
-The modules can also be imported. `common.resolve()` returns the target, `landing_order.check(target, author)` returns the landing facts, and `pr_health.snapshot(github, author, ignore)` returns the health snapshot.
+The `pr_toolbox` modules can also be imported. `common.resolve()` returns the target, `landing_order.check(target, author)` returns the landing facts, and `pr_health.snapshot(github, author, ignore)` returns the health snapshot.
 
 ## Limits
 

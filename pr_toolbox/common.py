@@ -16,7 +16,8 @@ from pathlib import Path
 
 PRESETS = Path(__file__).resolve().parent / "presets"
 PRESET_FOR_REPO = {"openemr/openemr": "openemr"}
-CONFIG_NAME = ".pr-tools.json"
+CONFIG_NAME = ".pr-toolbox.json"
+OLD_CONFIG_NAMES = [".pr-tools.json"]
 
 PRS_QUERY = """query($owner: String!, $name: String!, $cursor: String) {
   repository(owner: $owner, name: $name) { pullRequests(states: OPEN, first: 50, after: $cursor) {
@@ -79,7 +80,7 @@ def github_of(url: str) -> str | None:
 
 
 def add_target_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--repo", help="the git checkout (default: $PR_TOOLS_REPO, then the current directory's repository)")
+    parser.add_argument("--repo", help="the git checkout (default: $PR_TOOLBOX_REPO, then the current directory's repository)")
     parser.add_argument("--remote", help="the remote that points at the GitHub repository (default: upstream if there is one, else origin)")
     parser.add_argument("--github-repo", help="owner/name on GitHub (default: read from the remote's URL)")
     parser.add_argument("--base-branch", help="the branch PRs merge into (default: the remote's default branch)")
@@ -89,20 +90,20 @@ def add_target_arguments(parser: argparse.ArgumentParser) -> None:
 
 def resolve(args: argparse.Namespace, need_checkout: bool = True) -> Target:
     """Works out the target from the arguments, the environment and the checkout."""
-    repo_arg = getattr(args, "repo", None) or env("PR_TOOLS_REPO", "OPENEMR_REPO")
+    repo_arg = getattr(args, "repo", None) or env("PR_TOOLBOX_REPO", "PR_TOOLS_REPO", "OPENEMR_REPO")
     if repo_arg:
         repo = Path(repo_arg).expanduser().resolve()
     else:
         top = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True)
         repo = Path(top.stdout.strip()) if top.returncode == 0 else Path.cwd()
     remotes = git(repo, "remote").stdout.split()
-    remote = getattr(args, "remote", None) or env("PR_TOOLS_REMOTE") or ("upstream" if "upstream" in remotes else "origin")
-    github = getattr(args, "github_repo", None) or env("PR_TOOLS_GITHUB_REPO", "OPENEMR_GITHUB_REPO")
+    remote = getattr(args, "remote", None) or env("PR_TOOLBOX_REMOTE", "PR_TOOLS_REMOTE") or ("upstream" if "upstream" in remotes else "origin")
+    github = getattr(args, "github_repo", None) or env("PR_TOOLBOX_GITHUB_REPO", "PR_TOOLS_GITHUB_REPO", "OPENEMR_GITHUB_REPO")
     if not github and remote in remotes:
         github = github_of(git(repo, "remote", "get-url", remote).stdout)
     if not github:
         raise ToolError(f"can't tell which GitHub repository {repo} is for: pass --github-repo owner/name")
-    base_branch = getattr(args, "base_branch", None) or env("PR_TOOLS_BASE_BRANCH")
+    base_branch = getattr(args, "base_branch", None) or env("PR_TOOLBOX_BASE_BRANCH", "PR_TOOLS_BASE_BRANCH")
     if not base_branch and need_checkout and remote in remotes:
         symref = git(repo, "ls-remote", "--symref", remote, "HEAD").stdout
         match = re.search(r"^ref: refs/heads/(\S+)\s+HEAD", symref, re.M)
@@ -113,15 +114,16 @@ def resolve(args: argparse.Namespace, need_checkout: bool = True) -> Target:
 
 
 def load_config(repo: Path, github: str, path: str | None = None, preset: str | None = None) -> dict:
-    """An explicit file, else .pr-tools.json in the checkout, else a built-in profile for the
-    repository, else nothing: plain test merges, health, and the generic checks."""
+    """An explicit file, else .pr-toolbox.json (or the older .pr-tools.json) in the checkout, else a
+    built-in profile for the repository, else nothing: plain test merges, health, and the generic
+    checks."""
     if path:
         return json.loads(Path(path).expanduser().read_text())
     if preset:
         return json.loads((PRESETS / f"{preset}.json").read_text())
-    local = repo / CONFIG_NAME
-    if local.exists():
-        return json.loads(local.read_text())
+    for local in (repo / n for n in [CONFIG_NAME, *OLD_CONFIG_NAMES]):
+        if local.exists():
+            return json.loads(local.read_text())
     name = PRESET_FOR_REPO.get(github.lower())
     return json.loads((PRESETS / f"{name}.json").read_text()) if name else {}
 
@@ -171,7 +173,7 @@ def merged(repo: Path, base: str, ref: str) -> tuple[str | None, list[str]]:
         return None, conflicted_files(lines[1:])
     if result.returncode != 0 or not lines:
         raise ToolError(f"merge-tree {ref}: {result.stderr.strip()[:200]}")
-    commit = git(repo, "commit-tree", lines[0], "-p", base, "-p", ref, "-m", "pr-tools probe", check=True).stdout.strip()
+    commit = git(repo, "commit-tree", lines[0], "-p", base, "-p", ref, "-m", "pr-toolbox probe", check=True).stdout.strip()
     return commit, []
 
 

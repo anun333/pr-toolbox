@@ -233,7 +233,7 @@ class Check:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="pr-tools check", description=__doc__.split("\n")[0])
+    parser = argparse.ArgumentParser(prog="pr-toolbox check", description=__doc__.split("\n")[0])
     add_target_arguments(parser)
     parser.add_argument("--worktree", help="the same as --repo")
     parser.add_argument("--container", default="auto", help="container for the profile's container steps: auto (the one that mounts the checkout), a name, or none")

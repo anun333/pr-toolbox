@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.0 (2026-10-19)
+
+Renamed **pr-toolbox**, since the tools work on any GitHub repository.
+
+- **Repository:** https://github.com/anun333/pr-toolbox. GitHub redirects the old address.
+- **Command:** `pr-toolbox`. `pr-tools` and `openemr-pr-tools` still work.
+- **Python package:** `pr_toolbox`. `openemr_pr_tools` still imports, and gives the same modules.
+- **Profile file:** `.pr-toolbox.json`. `.pr-tools.json` is still read.
+- **Environment:** `PR_TOOLBOX_REPO`, `PR_TOOLBOX_REMOTE`, `PR_TOOLBOX_GITHUB_REPO` and `PR_TOOLBOX_BASE_BRANCH`. The `PR_TOOLS_*` and `OPENEMR_*` names are still read.
+- **Default state directory:** `.pr-toolbox/`. Pass `--state-dir .pr-tools` to keep using 0.2's.
+
+Nothing else changed.
+
 ## 0.2.0 (2026-10-19)
 
 The tools now work on any GitHub repository.

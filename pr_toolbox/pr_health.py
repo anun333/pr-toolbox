@@ -140,10 +140,10 @@ def events(previous: dict, current: dict, notes: dict, github: str = "") -> list
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="pr-tools health", description=__doc__.split("\n")[0])
+    parser = argparse.ArgumentParser(prog="pr-toolbox health", description=__doc__.split("\n")[0])
     add_target_arguments(parser)
     parser.add_argument("--author", help="GitHub login whose PRs to watch (default: the gh login)")
-    parser.add_argument("--state-dir", default=".pr-tools", help="where the last snapshot is kept (default: .pr-tools)")
+    parser.add_argument("--state-dir", default=".pr-toolbox", help="where the last snapshot is kept (default: .pr-toolbox)")
     parser.add_argument("--notes", help="per-PR notes with depends_on lists (default: <state-dir>/landing-order-notes.json)")
     parser.add_argument("--ignore", help=f"regex of check names to leave out (default: the profile's health_ignore, else {DEFAULT_IGNORE})")
     args = parser.parse_args(argv)

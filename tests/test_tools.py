@@ -15,7 +15,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from openemr_pr_tools import common, landing_order, pr_check, pr_health  # noqa: E402
+from pr_toolbox import common, landing_order, pr_check, pr_health  # noqa: E402
 
 
 def repo_with(files: dict[str, str]) -> Path:
@@ -61,6 +61,16 @@ class CommonTest(unittest.TestCase):
         (repo / common.CONFIG_NAME).write_text('{"name": "mine"}')
         self.assertEqual("mine", common.load_config(repo, "openemr/openemr").get("name"))
         self.assertEqual("openemr", common.load_config(repo, "someone/else", preset="openemr").get("name"))
+        (repo / common.CONFIG_NAME).unlink()
+        (repo / ".pr-tools.json").write_text('{"name": "older"}')
+        self.assertEqual("older", common.load_config(repo, "openemr/openemr").get("name"))
+
+    def test_the_old_package_name_gives_the_same_modules(self):
+        import openemr_pr_tools
+        from openemr_pr_tools import common as old_common, landing_order as old_landing
+        self.assertIs(common, old_common)
+        self.assertIs(landing_order, old_landing)
+        self.assertEqual(openemr_pr_tools.__version__, sys.modules["pr_toolbox"].__version__)
 
     def test_patterns_match_paths(self):
         self.assertTrue(common.matches("tests/Tests/Isolated/A/BTest.php", "tests/Tests/Isolated/*Test.php"))

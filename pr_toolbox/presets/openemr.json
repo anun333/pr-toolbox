@@ -26,8 +26,8 @@
   {"name": "phpcs", "where": "container", "files": "*.php", "run": "vendor/bin/phpcs --standard=phpcs.xml.dist -q --report=summary {files}"},
   {"name": "rector", "where": "container", "files": "*.php", "run": "vendor/bin/rector process --dry-run --no-progress-bar {files}", "fail_pattern": "would have (been )?changed|\\d+ files? with changes"},
   {"name": "phpstan", "where": "container", "always": true,
-   "write": {"path": "/tmp/pr-tools-phpstan.neon", "content": "includes:\n  - {app_dir}/.phpstan/phpstan.ci.neon\nparameters:\n  parallel:\n    maximumNumberOfProcesses: {workers}\n"},
-   "run": "php -d memory_limit=8G vendor/bin/phpstan --memory-limit=8G analyze -c /tmp/pr-tools-phpstan.neon --error-format=raw --no-progress", "timeout": 3600},
+   "write": {"path": "/tmp/pr-toolbox-phpstan.neon", "content": "includes:\n  - {app_dir}/.phpstan/phpstan.ci.neon\nparameters:\n  parallel:\n    maximumNumberOfProcesses: {workers}\n"},
+   "run": "php -d memory_limit=8G vendor/bin/phpstan --memory-limit=8G analyze -c /tmp/pr-toolbox-phpstan.neon --error-format=raw --no-progress", "timeout": 3600},
   {"name": "tests-isolated", "where": "container", "each": "tests/Tests/Isolated/*Test.php", "run": "vendor/bin/phpunit -c phpunit-isolated.xml {file}", "timeout": 3600},
   {"name": "tests", "where": "container", "each": "tests/Tests/*Test.php", "exclude": ["tests/Tests/Isolated/*"], "run": "vendor/bin/phpunit -c phpunit.xml {file}", "timeout": 3600}
  ]

@@ -4,7 +4,7 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "openemr-pr-tools"
+name = "pr-toolbox"
 dynamic = ["version"]
 description = "Quiet, local tools for people who send pull requests to any GitHub project: landing order, PR health, and a pre-push check, with a built-in OpenEMR profile."
 readme = "README.md"
@@ -21,18 +21,19 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/anun333/openemr-pr-tools"
-Issues = "https://github.com/anun333/openemr-pr-tools/issues"
+Homepage = "https://github.com/anun333/pr-toolbox"
+Issues = "https://github.com/anun333/pr-toolbox/issues"
 
 [project.scripts]
-pr-tools = "openemr_pr_tools.__main__:main"
-openemr-pr-tools = "openemr_pr_tools.__main__:main"
+pr-toolbox = "pr_toolbox.__main__:main"
+pr-tools = "pr_toolbox.__main__:main"
+openemr-pr-tools = "pr_toolbox.__main__:main"
 
 [tool.setuptools]
-packages = ["openemr_pr_tools"]
+packages = ["pr_toolbox", "openemr_pr_tools"]
 
 [tool.setuptools.package-data]
-openemr_pr_tools = ["presets/*.json"]
+pr_toolbox = ["presets/*.json"]
 
 [tool.setuptools.dynamic]
-version = { attr = "openemr_pr_tools.__version__" }
+version = { attr = "pr_toolbox.__version__" }

@@ -226,10 +226,10 @@ def describe_change(n: str, previous: dict, result: dict) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="pr-tools landing", description=__doc__.split("\n")[0])
+    parser = argparse.ArgumentParser(prog="pr-toolbox landing", description=__doc__.split("\n")[0])
     add_target_arguments(parser)
     parser.add_argument("--author", help="GitHub login whose PRs to check (default: the gh login)")
-    parser.add_argument("--state-dir", default=".pr-tools", help="where the facts and report are kept (default: .pr-tools)")
+    parser.add_argument("--state-dir", default=".pr-toolbox", help="where the facts and report are kept (default: .pr-toolbox)")
     parser.add_argument("--notes", help="hand-written context per PR (default: <state-dir>/landing-order-notes.json)")
     parser.add_argument("--report", help="markdown report path (default: <state-dir>/landing-order.md)")
     parser.add_argument("--if-due", action="store_true", help="check only when the base branch or one of the PRs moved")

@@ -379,7 +379,8 @@ data["path"] = {
     "rebase_mechanical": sorted(n for n in needs_rebase if master_conf.get(n) and all(MECHANICAL.match(f) for f in master_conf[n])),
 }
 data["maintainers"] = [{"login": k, "merged": v} for k, v in mergers.items() if k in MAINTAINERS]
-data["profile"] = {k: P.get(k) for k in ("title", "project", "github", "base_branch", "mechanical_note", "left_out_note", "method_notes", "symbols")}
+data["profile"] = {k: P.get(k) for k in ("title", "project", "github", "base_branch", "mechanical_note", "left_out_note", "method_notes", "symbols",
+                                          "mass_files", "skip_labels", "tool_version", "preset")}
 data["profile"]["version_noun"] = (P.get("version_claims") or {}).get("noun", "version number").strip("`")
 data["profile"]["caps_noun"] = (P.get("exact_caps") or {}).get("noun", "lint cap")
 data["profile"]["caps_file"] = (P.get("exact_caps") or {}).get("file")

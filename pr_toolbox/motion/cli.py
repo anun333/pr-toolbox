@@ -23,7 +23,7 @@ import sys
 import time
 from pathlib import Path
 
-from .. import common
+from .. import __version__, common
 
 HERE = Path(__file__).resolve().parent
 PRESETS = HERE.parent / "presets"
@@ -88,7 +88,8 @@ def resolve_profile(target: common.Target, args: argparse.Namespace) -> dict:
             globs += [caps["file"], caps["counted"].replace("{name}", "*")]
         motion["mechanical"] = "^(" + "|".join(_glob_re(g) for g in globs) + ")$" if globs else "$^"
     return {"github": target.github, "owner": owner, "name": name, "remote": target.remote,
-            "base_branch": target.base_branch, "version_claims": vc, "exact_caps": caps, **motion}
+            "base_branch": target.base_branch, "version_claims": vc, "exact_caps": caps,
+            "tool_version": __version__, "preset": getattr(args, "preset", None), **motion}
 
 
 def _glob_re(glob: str) -> str:

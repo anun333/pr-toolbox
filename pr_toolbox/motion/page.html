@@ -52,6 +52,7 @@ p { margin: 0; max-width: 68ch; }
 a { color: var(--accent); text-underline-offset: 2px; }
 a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
 code, .mono { font-family: var(--f-mono); font-size: 0.86em; }
+code { overflow-wrap: anywhere; }
 .eyebrow { font: 600 0.75rem/1 var(--f-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
 .muted { color: var(--muted); }
 .stack { display: flex; flex-direction: column; gap: var(--s4); }
@@ -139,7 +140,8 @@ table.triage th button { all: unset; cursor: pointer; }
 table.triage th button:focus-visible { outline: 2px solid var(--accent); }
 table.triage tbody tr { cursor: pointer; }
 table.triage tbody tr:hover { background: var(--accent-soft); }
-table.triage td.t { max-width: 360px; }
+table.triage td.t { min-width: 15em; max-width: 360px; }
+table.triage td.zero { color: var(--muted); }
 table.triage td.t .by { color: var(--muted); font-size: 0.82rem; }
 .card { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s4); }
 .card .panel { padding: var(--s4); }
@@ -195,7 +197,7 @@ table.triage td.t .by { color: var(--muted); font-size: 0.82rem; }
     <div class="panel">
       <div class="row" id="presets"></div>
       <div class="filters" id="filters" role="group" aria-label="Filters"></div>
-      <div class="row"><label for="tq" class="eyebrow">Title or author</label><input id="tq" class="tq" spellcheck="false" placeholder="fhir, vitals, tsimonq2"><span class="muted" id="tcount"></span></div>
+      <div class="row"><label for="tq" class="eyebrow">Title, author or number</label><input id="tq" class="tq" spellcheck="false" placeholder="fhir, vitals, tsimonq2, 14443"><span class="muted" id="tcount"></span></div>
       <div class="scroll"><table class="triage" id="ttable"></table></div>
     </div>
   </section>
@@ -244,6 +246,13 @@ const MAP = /*MAP_DATA*/null;
 const PF = MAP.profile || {};
 const GH = `https://github.com/${PF.github}/`;
 const BASE = PF.base_branch || "master", VN = PF.version_noun || "version number", CN = PF.caps_noun || "lint cap";
+const MASS = PF.mass_files || 150;
+const plural = (k, one, many) => `${k} ${k === 1 ? one : many}`;
+for (const [n, p] of Object.entries(MAP.prs)) p.n = +n;
+/* a stack carries its base's version bump, so a number shared only within a stack is not a collision */
+const STACKED = new Set((MAP.duplicates?.stacked || []).flatMap((x) => [`${x.in}:${x.contained}`, `${x.contained}:${x.in}`]));
+const realShared = (p) => p.claim_shared.filter((m) => !STACKED.has(`${p.n}:${m}`));
+const stackShared = (p) => p.claim_shared.filter((m) => STACKED.has(`${p.n}:${m}`));
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const prLink = (n) => `<a class="mono" href="${GH}pull/${n}">#${n}</a>`;
@@ -285,7 +294,8 @@ function renderStamp() {
   const s = MAP.stamp;
   const tags = s.tags.filter((t) => t.name !== BASE).map((t) => `${t.name} ${t.date}`).join(" · ");
   $("#stamp").innerHTML = `<dt>${esc(BASE)}</dt><dd><b>${esc(s.master)}</b></dd><dt>generated</dt><dd><b>${esc(s.generated)}</b></dd>
-    <dt>open PRs</dt><dd><b>${s.open_prs}</b> (${s.drafts} drafts)</dd><dt>releases</dt><dd>${esc(tags)}</dd>`;
+    <dt>open PRs</dt><dd><b>${s.open_prs}</b> (${s.drafts} drafts)</dd><dt>releases</dt><dd>${esc(tags)}</dd>
+    <dt>built with</dt><dd><a href="https://github.com/anun333/pr-toolbox">pr-toolbox</a>${PF.tool_version ? ` ${esc(PF.tool_version)}` : ""} · <a href="#rebuild">rebuild it</a></dd>`;
 }
 
 function quoteBlock(t) {
@@ -336,7 +346,7 @@ function renderTwice() {
 function renderMerge() {
   const m = MAP.merge, tested = MAP.stamp.open_prs - Object.keys(MAP.stamp.mass).length;
   $("#merge-stats").innerHTML = [
-    [m.needs_rebase, `of ${tested} PRs no longer merge onto ${BASE}`, "conflict"],
+    [m.needs_rebase, `of ${tested} PRs tested no longer merge onto ${BASE}${tested < MAP.stamp.open_prs ? ` (the ${MAP.stamp.open_prs - tested} over ${MASS} files are listed apart)` : ""}`, "conflict"],
     [m.needs_rebase_mechanical_only, "of those conflict only in mechanical files", "mech"],
     [m.conflict_pairs_code, `pairs conflict in code, of ${m.pairs_sharing_a_file.toLocaleString()} that share a file`, "conflict"],
     [m.conflict_pairs_mechanical, "pairs conflict only in mechanical files", "mech"],
@@ -421,7 +431,7 @@ function renderMethod() {
     <li>Release counts were taken from each tag's tree. Plan issues, labels, CI states, reviews and the issues each PR closes come from GitHub on the build date. A maintainer review means one from someone who merged a PR in the past year (${MAP.maintainers.map((m) => `${esc(m.login)} ${m.merged}`).join(", ")}) or a member of the ${esc(PF.project || "project")} organisation, other than the PR's author; automated reviewers are counted apart.</li>
     ${Object.keys(MAP.direction_labels || {}).length ? `<li>"Fit with the plan" counts, in each PR's added and removed lines (tests and baselines aside), the patterns the plan retires: ${Object.values(MAP.direction_labels).map((d) => esc(d.label)).join(", ")}.</li>` : ""}
     <li>The path forward cuts each plan's remaining work the way the plan says: folders for a plan worked folder by folder, unticked items for a tracker issue (reach counted as the files that call what each item defines, or include it by name), and plan issues as single items. An item is in flight when an open PR cites its issue; a file is busy when an open PR changes it.</li>
-    <li>Built by <a href="https://github.com/anun333/pr-toolbox">pr-toolbox</a> <code>motion</code> with the project's profile, which anyone can rerun from the same commits.</li>
+    <li>Built by <a href="https://github.com/anun333/pr-toolbox">pr-toolbox</a> <code>motion</code>${PF.tool_version ? ` ${esc(PF.tool_version)}` : ""} with the project's profile; <a href="#rebuild">rebuild it yourself</a> from the same commits or from today's.</li>
     <li>Every build first checks known cases: each must be found, or the build stops rather than publish a silent zero.</li>
     <li>"Read for clashes" is judgement. Candidate pairs are chosen by script and weighted by how few PRs share the concept; readers take each pair from both diffs, with each PR's mention of its partner withheld, and must cite lines from both sides and a concrete case of what breaks. A second reading tries to refute each clash.</li>
     ${(PF.method_notes || []).map((t) => `<li>${linkNums(t)}</li>`).join("")}
@@ -430,11 +440,31 @@ function renderMethod() {
     <ul class="plain">${(MAP.controls || []).map((c) => `<li><span class="pill ${c.outcome === "void" ? "conflict" : c.outcome === "retired" ? "draft" : "ok"}">${esc(c.outcome)}</span> ${linkNums(c.name)}</li>`).join("")}</ul></div>
     <div class="panel"><h3>Limits</h3><ul class="plain">
     <li>A clean text merge can still fail tests. The checks here find the common cases, not all of them.</li>
-    <li>PRs that change more than 150 files (${Object.entries(MAP.stamp.mass).map(([n, c]) => `${prLink(n)} ${c}`).join(", ")}) meet nearly everything, so they are listed, not compared pair by pair.</li>
+    <li>PRs that change more than ${MASS} files (${Object.entries(MAP.stamp.mass).map(([n, c]) => `${prLink(n)} ${c}`).join(", ")}) meet nearly everything, so they are listed, not compared pair by pair.</li>
     <li>Signature checks follow one level of inheritance and compare types by name.</li>
     <li>An area's open PRs are found by the issues they cite, labels, titles and paths, so the lists are a guide, not a census.</li>
-    <li>PRs and issues labelled Security or ACL &amp; Permissions are left out of the areas.</li>
-    <li>Each check was first run against known cases it had to find, for example ${prLink(14443)} against ${prLink(14708)} (a return type PHP would refuse) and three PRs creating one table.</li></ul></div>`;
+    ${(PF.skip_labels || []).length ? `<li>PRs and issues labelled ${PF.skip_labels.map(esc).join(" or ")} are left out of the areas.</li>` : ""}
+    <li>A check is only as good as its controls: the known cases this build had to find are listed under <i>Controls this build</i>.</li></ul></div>
+    ${rebuildPanel()}`;
+}
+
+/* how a reader reruns this page, or one card, without anyone's copy of it */
+function rebuildPanel() {
+  const at = PF.tool_version ? `@v${PF.tool_version}` : "";
+  const profile = PF.preset ? ` --preset ${PF.preset}` : "";
+  const cmds = [`pipx install "git+https://github.com/anun333/pr-toolbox.git${at}"`,
+    `git clone https://github.com/${PF.github}.git && cd ${PF.github.split("/")[1]}`,
+    `pr-toolbox motion${profile} --threads 4 --out work-in-motion.html`].join("\n");
+  return `<div class="panel" id="rebuild" style="grid-column:1/-1"><h3>Rebuild it, or check one card</h3>
+    <p>This page is a snapshot of ${esc(BASE)} <code>${esc(MAP.stamp.master)}</code> on ${esc(MAP.stamp.generated)}. Anyone can rebuild it from the same commits, or from today's, with the same profile. It posts nothing and runs no PR's code.</p>
+    <pre class="cmd">${esc(cmds)}</pre>
+    <ul class="plain">
+      <li>Needs Python 3.10 or later, git 2.38 or later (for <code>merge-tree --write-tree</code>), and the GitHub CLI signed in (<code>gh auth login</code>) to read open PRs and issues.${PF.symbols === "php" ? " The PHP checks use PHP's own tokenizer: Docker's php image, or a local php." : ""}</li>
+      <li>${PF.preset ? `<code>--preset ${esc(PF.preset)}</code> is the profile this page was built with.` : `The profile is the repository's <code>.pr-toolbox.json</code>.`} Another project needs its own profile; the README lists the keys.</li>
+      <li>The first build merges every PR and every pair that shares a file: minutes, not seconds. Later builds reuse the cache and merge again only what the base or a PR changed.</li>
+      <li>To check one card without rebuilding, open its <i>Check it yourself</i> commands: they are git's own merges at the commits the card names. Put today's ${esc(BASE)} in place of the pinned commit to see whether the finding still holds.</li>
+      <li>To read candidate pairs for semantic clashes as this page did: <code>pr-toolbox motion candidates</code>, then <code>pr-toolbox motion packets</code>, with the reader instructions the packets command names.</li>
+    </ul></div>`;
 }
 
 /* the path forward: decide, land, rebase, then pick up new work in each plan's own order */
@@ -473,7 +503,7 @@ function renderPath() {
     ...d.shared_names.filter((x) => !(x.kind === "upgrade column" && x.prs.length === 2)).map((x) => `<li>${x.prs.map(prLink).join(", ")} all add the ${esc(x.kind)} <code>${esc(x.name)}</code></li>`)].join("");
   const shortlist = Object.values(MAP.prs).filter((p) => PRESETS[0][1].every((id) => FILTERS.find((f) => f[0] === id)[2](p))).length;
   const v = MAP.merge.version;
-  const renumber = [...new Set([...v.taken, ...Object.values(v.shared).flat()])];
+  const renumber = [...new Set([...v.taken, ...Object.values(v.shared).flat().filter((n) => realShared(MAP.prs[n] || { n, claim_shared: [] }).length)])];
   const caps = Object.keys(MAP.merge.caps_alone);
   const areaTodos = MAP.streams.filter((s) => P.todos[s.id]).map((s) => `<article class="panel" id="next-${esc(s.id)}"><h3><a href="#area-${esc(s.id)}">${esc(s.title)}</a></h3>
       ${P.todos[s.id].filter((t) => t.kind === "batches").map(todoBatches).join("")}
@@ -484,10 +514,10 @@ function renderPath() {
       <div class="panel"><span class="eyebrow">1 · Maintainers</span><h3>Decide between overlapping PRs</h3><p class="muted">Pick one of each group, or combine them, before anyone reviews twice.</p><ul class="plain">${decide || "<li>None.</li>"}</ul></div>
       <div class="panel"><span class="eyebrow">2 · Maintainers</span><h3>Review what nothing blocks</h3><p><b class="mono" style="font-size:1.4rem">${shortlist}</b> open PRs have nothing these checks can see in their way: out of draft, merging onto master, passing CI, no code conflict with another PR, no break, nothing the plan retires, version number and caps whole.</p><p><button type="button" class="chipbtn" id="go-shortlist">Show them</button></p><p class="muted">This is not a review. It says only that reviewing one of these won't be wasted on a rebase or a collision, and that each merge from it shortens the queue for the PRs behind.</p></div>
       <div class="panel"><span class="eyebrow">3 · Authors</span><h3>Rebase where the fix is mechanical</h3>
-        <p><b>${P.rebase_mechanical.length}</b> PRs conflict with ${esc(BASE)} only in ${esc(PF.mechanical_note || "mechanical files")}: a rebase with no code decision in it.</p>${more(P.rebase_mechanical, 8, (n) => prLine(n))}
-        ${renumber.length ? `<p>${renumber.length} PRs claim a <code>${esc(VN)}</code> that ${esc(BASE)} or another PR already uses: ${renumber.map(prLink).join(" ")}.</p>` : ""}
-        ${caps.length ? `<p>${caps.length} PRs would break the ${esc(CN)}s once merged onto ${esc(BASE)}: ${caps.map(prLink).join(" ")}.</p>` : ""}
-        ${Object.keys(MAP.merge.stale_upgrade?.prs || {}).length ? `<p>${Object.keys(MAP.merge.stale_upgrade.prs).length} PRs change an earlier release's upgrade file, which sites already past that release never run; worth a look that each is a fix to the old upgrade path rather than a change every site needs: ${Object.keys(MAP.merge.stale_upgrade.prs).map(prLink).join(" ")}.</p>` : ""}</div>
+        <p><b>${P.rebase_mechanical.length}</b> ${P.rebase_mechanical.length === 1 ? "PR conflicts" : "PRs conflict"} with ${esc(BASE)} only in ${esc(PF.mechanical_note || "mechanical files")}: a rebase with no code decision in it.</p>${more(P.rebase_mechanical, 8, (n) => prLine(n))}
+        ${renumber.length ? `<p>${plural(renumber.length, "PR claims", "PRs claim")} a <code>${esc(VN)}</code> that ${esc(BASE)} or another PR already uses: ${renumber.map(prLink).join(" ")}.</p>` : ""}
+        ${caps.length ? `<p>${plural(caps.length, "PR", "PRs")} would break the ${esc(CN)}s once merged onto ${esc(BASE)}: ${caps.map(prLink).join(" ")}.</p>` : ""}
+        ${Object.keys(MAP.merge.stale_upgrade?.prs || {}).length ? `<p>${plural(Object.keys(MAP.merge.stale_upgrade.prs).length, "PR changes", "PRs change")} an earlier release's upgrade file, which sites already past that release never run; worth a look that each is a fix to the old upgrade path rather than a change every site needs: ${Object.keys(MAP.merge.stale_upgrade.prs).map(prLink).join(" ")}.</p>` : ""}</div>
       <div class="panel"><span class="eyebrow">4 · Contributors</span><h3>Then pick up new work, in the plan's order</h3><ul class="plain">
         <li>Comment on the plan issue before starting, unless it asks for help.</li>
         <li>One batch per area at a time, cut the way the plan says, on files no open PR changes.</li>
@@ -505,9 +535,9 @@ const REVIEW = { APPROVED: ["ok", "approved"], CHANGES_REQUESTED: ["conflict", "
 const reviewPill = (p) => p.maint ? `<span class="pill ${REVIEW[p.maint][0]}">${REVIEW[p.maint][1]}</span> <span class="by">${esc(p.maint_by)}</span>` : '<span class="pill draft">no maintainer review</span>';
 const isBreak = (w) => /^(changes |removes |deletes |calls |its )/.test(w);
 const codeConf = (p) => p.conflicts.filter((c) => c.kind === "code").length;
-const versionTaken = (p) => p.claim_taken || p.claim_shared.length > 0 || p.no_bump;
+const versionTaken = (p) => p.claim_taken || realShared(p).length > 0 || p.no_bump;
 const versionCell = (p) => p.claim == null ? (p.no_bump ? '<span class="pill mech">SQL, no bump</span>' : '<span class="muted">none</span>')
-  : p.claim_taken ? `<span class="pill conflict">${p.claim} taken</span>` : p.claim_shared.length ? `<span class="pill conflict">${p.claim} shared</span>` : `<span class="pill ok">${p.claim}</span>`;
+  : p.claim_taken ? `<span class="pill conflict">${p.claim} taken</span>` : realShared(p).length ? `<span class="pill conflict">${p.claim} shared</span>` : `<span class="pill ok">${p.claim}</span>`;
 const dirLabel = (k) => MAP.direction_labels[k]?.label || k;
 const planCell = (p) => [...p.against.map((k) => `<span class="pill conflict">+ ${esc(dirLabel(k))}</span>`), ...p.toward.map((k) => `<span class="pill ok">− ${esc(dirLabel(k))}</span>`)].join(" ") || '<span class="muted">none</span>';
 const ontoCell = (p) => p.mass ? '<span class="pill mech">not tested</span>' : p.rebase ? '<span class="pill conflict">rebase</span>' : '<span class="pill ok">merges</span>';
@@ -535,7 +565,7 @@ function prCard(n, p) {
       ${li(`${ontoCell(p)} onto ${esc(BASE)}${p.rebase && p.rebase_files.length ? ` <span class="muted mono" style="font-size:.8rem">${esc(p.rebase_files.join(", "))}</span>` : ""}`)}
       ${li(code.length ? `<span class="pill conflict">code conflicts</span> with ${code.map((c) => `${prLink(c.n)} <span class="muted mono" style="font-size:.78rem">${esc(c.files.slice(0, 2).join(", "))}</span>`).join(", ")}` : '<span class="muted">no code conflicts with other open PRs</span>')}
       ${mech.length ? li(`<span class="pill mech">mechanical</span> with ${mech.map((c) => prLink(c.n)).join(" ")}`) : ""}
-      ${li(`${esc(VN)}: ${versionCell(p)}${p.claim_shared.length ? ` also claimed by ${p.claim_shared.map(prLink).join(", ")}` : ""}${p.claim_taken ? " (${esc(BASE)} already uses it)" : ""}${p.no_bump ? " (changes the upgrade SQL without changing it)" : ""}`)}
+      ${li(`${esc(VN)}: ${versionCell(p)}${realShared(p).length ? ` also claimed by ${realShared(p).map(prLink).join(", ")}` : ""}${stackShared(p).length ? ` <span class="muted">(the same bump as ${stackShared(p).map(prLink).join(", ")}, stacked with it)</span>` : ""}${p.claim_taken ? ` (${esc(BASE)} already uses it)` : ""}${p.no_bump ? " (changes the upgrade SQL without changing it)" : ""}`)}
       ${(p.stale_sql || []).length ? li(`<span class="pill mech">earlier release's upgrade file</span> it changes ${p.stale_sql.map((f) => `<code>${esc(f)}</code>`).join(", ")}: only sites upgrading from before that release run it. Intended for a fix to the old upgrade path; a change current sites need also belongs in <code>${esc(MAP.merge.stale_upgrade.current)}</code>`) : ""}
       ${p.caps_alone.length ? li(`<span class="pill conflict">caps</span> merged alone: ${esc(p.caps_alone.join("; "))}`) : ""}
       ${p.caps_with.map((c) => li(`<span class="pill conflict">caps</span> merged with ${prLink(c.n)}: ${esc(c.caps.join("; "))}`)).join("")}</ul></div>
@@ -576,7 +606,7 @@ const FILTERS = [
   ["nomaint", "No maintainer review yet", (p) => !p.maint],
 ];
 const PRESETS = [
-  ["Nothing blocking", ["ready", "merges", "ci", "noconf", "nobreak", "plan", "version", "caps"], "updated"],
+  ["Nothing blocking", ["ready", "merges", "ci", "noconf", "nobreak", "plan", "version", "caps"], "age"],
   ["Waiting longest for a maintainer", ["ready", "nomaint"], "age"],
   ["Clear filters", [], "updated"],
 ];
@@ -606,22 +636,22 @@ function renderTriage() {
     const row = e.target.closest("tr[data-n]");
     if (row && !e.target.closest("a")) { $("#q").value = row.dataset.n; lookup(row.dataset.n); $("#lookup").scrollIntoView({ behavior: "smooth", block: "start" }); }
   });
-  tstate.on = new Set(PRESETS[0][1]);
+  tstate.on = new Set(PRESETS[0][1]); tstate.sort = PRESETS[0][2];
   drawTriage();
 }
 
 function drawTriage() {
   for (const [id] of FILTERS) $(`#f-${id}`).setAttribute("aria-pressed", String(tstate.on.has(id)));
   const tests = FILTERS.filter(([id]) => tstate.on.has(id)).map(([, , f]) => f);
-  let rows = Object.entries(MAP.prs).filter(([, p]) => tests.every((f) => f(p)) && (!tstate.q || p.t.toLowerCase().includes(tstate.q) || p.by.toLowerCase().includes(tstate.q)));
+  let rows = Object.entries(MAP.prs).filter(([, p]) => tests.every((f) => f(p)) && (!tstate.q || p.t.toLowerCase().includes(tstate.q) || p.by.toLowerCase().includes(tstate.q) || String(p.n) === tstate.q.replace(/^#/, "")));
   const key = SORTS[tstate.sort] || SORTS.updated;
   rows.sort((a, b) => { const x = key(a[1], +a[0]), y = key(b[1], +b[0]); return tstate.sort === "updated" ? (x < y ? 1 : x > y ? -1 : 0) : x - y; });
   $("#tcount").textContent = `${rows.length} of ${Object.keys(MAP.prs).length} open PRs`;
   const head = `<thead><tr>${COLS.map(([k, label]) => SORTS[k] ? `<th class="${["age", "conf", "breaks", "size", "tests"].includes(k) ? "n" : ""}"><button type="button" data-sort="${k}">${esc(label)}${tstate.sort === k ? " ↓" : ""}</button></th>` : `<th>${esc(label)}</th>`).join("")}</tr></thead>`;
   const body = rows.map(([n, p]) => `<tr data-n="${n}"><td>${prLink(n)}</td><td class="t">${esc(p.t)}${draft(n)}<div class="by">${esc(p.by)} · ${esc(p.updated)}</div></td>
     <td class="n">${p.age}</td><td>${ciPill(p.ci)}</td><td>${reviewPill(p)}</td><td>${ontoCell(p)}</td>
-    <td class="n">${codeConf(p) || ""}</td><td class="n">${p.breaks || ""}</td><td>${planCell(p)}</td><td>${versionCell(p)}</td>
-    <td class="n">+${p.add ?? "?"} −${p.del ?? "?"}</td><td class="n">${p.tests || ""}</td></tr>`).join("");
+    <td class="n${codeConf(p) ? "" : " zero"}">${codeConf(p)}</td><td class="n${p.breaks ? "" : " zero"}">${p.breaks}</td><td>${planCell(p)}</td><td>${versionCell(p)}</td>
+    <td class="n">+${p.add ?? "?"} −${p.del ?? "?"}</td><td class="n${p.tests ? "" : " zero"}">${p.tests}</td></tr>`).join("");
   $("#ttable").innerHTML = head + `<tbody>${body || `<tr><td colspan="${COLS.length}" class="muted">No open PR meets every filter. Clear one to widen the list.</td></tr>`}</tbody>`;
 }
 

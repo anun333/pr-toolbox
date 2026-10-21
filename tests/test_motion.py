@@ -275,6 +275,59 @@ class Skill(unittest.TestCase):
             self.assertTrue((ROOT / path).exists(), f"the skill names {path}, which doesn't exist")
 
 
+def _plain_strings_with_templates(js: str) -> list[str]:
+    """Double-quoted JavaScript strings that contain "${": they print the dollar sign and braces, where a template
+    literal was meant. Walks strings, template literals and their ${...} expressions, comments and regex literals."""
+    found, stack, prev, i, n = [], ["code"], "", 0, len(js)
+    while i < n:
+        c, top = js[i], stack[-1]
+        if top == "template":
+            if c == "\\":
+                i += 2
+            elif c == "`":
+                stack.pop()
+                prev, i = "`", i + 1
+            elif js.startswith("${", i):
+                stack.append("expr")
+                prev, i = "{", i + 2
+            else:
+                i += 1
+            continue
+        if js.startswith("//", i):
+            i = js.find("\n", i) if "\n" in js[i:] else n
+            continue
+        if js.startswith("/*", i):
+            i = js.index("*/", i + 2) + 2
+            continue
+        if c in "\"'":
+            j = i + 1
+            while j < n and js[j] not in (c, "\n"):
+                j += 2 if js[j] == "\\" else 1
+            if c == '"' and "${" in js[i:j + 1]:
+                found.append(js[i:j + 1])
+            prev, i = c, j + 1
+            continue
+        if c == "`":
+            stack.append("template")
+            i += 1
+            continue
+        if c == "/" and (not prev or prev in "(,=:[!&|?{};+-*%<>~^"):
+            j, in_class = i + 1, False
+            while j < n and js[j] != "\n" and (in_class or js[j] != "/"):
+                in_class = (in_class or js[j] == "[") and js[j] != "]"
+                j += 2 if js[j] == "\\" else 1
+            prev, i = "/", j + 1
+            continue
+        if c == "{":
+            stack.append("brace")
+        elif c == "}" and top in ("expr", "brace"):
+            stack.pop()
+        if not c.isspace():
+            prev = c
+        i += 1
+    return found
+
+
 class Profiles(unittest.TestCase):
     def test_openemr_preset_carries_motion(self) -> None:
         from pr_toolbox import common
@@ -285,6 +338,26 @@ class Profiles(unittest.TestCase):
         self.assertTrue(p["streams"]["streams"], "OpenEMR's areas come with the preset")
         self.assertTrue(p["controls"]["controls"], "and its controls")
         self.assertTrue(all("url" in t for s in p["streams"]["streams"] for t in s["target"]), "every target cites its source")
+
+    def test_the_page_names_the_release_that_built_it(self) -> None:
+        from pr_toolbox import __version__, common
+        target = common.Target(Path("."), "origin", "someone/thing", "main", {})
+        self.assertEqual(cli.resolve_profile(target, None)["tool_version"], __version__)
+
+    def test_the_template_names_no_project(self) -> None:
+        # the page is every project's: OpenEMR's PRs and labels come from its profile, never from the template
+        page = (MOTION / "page.html").read_text()
+        self.assertIsNone(re.search(r"prLink\(\d+\)|isLink\(\d+\)|#1\d{4}\b", page))
+        self.assertNotIn("OpenEMR", page)
+        self.assertNotIn("ACL", page)
+
+    def test_no_template_expression_in_a_plain_string(self) -> None:
+        page = (MOTION / "page.html").read_text()
+        script = page[page.index("<script>") + 8:page.rindex("</script>")]
+        self.assertEqual([], _plain_strings_with_templates(script))
+        # the check catches the bug it was written for, and not its look-alikes
+        self.assertEqual(['" (${esc(BASE)} already uses it)"'], _plain_strings_with_templates('x ? " (${esc(BASE)} already uses it)" : ""'))
+        self.assertEqual([], _plain_strings_with_templates("""`a ${p.x ? "b" : ""}${f("c")} d` + "e" + /[&<>"']/g.source"""))
 
     def test_neutral_defaults_for_any_repository(self) -> None:
         from pr_toolbox import common

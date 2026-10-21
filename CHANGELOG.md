@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.5 (2026-10-21)
+
+The `motion` page, checked in a browser at desktop and phone widths and in dark mode, with these fixes:
+- **Rebuild it, or check one card:** a new panel says how to rebuild the page from the same commits or from today's, with the install and run commands, what they need, and how to recheck one card's findings with git alone. The header names the pr-toolbox version that built the page and links to it.
+- **Literal code on cards:** a PR whose version number the base already uses would have shown `(${esc(BASE)} already uses it)` instead of the sentence. A test now scans the page's script for any double-quoted string holding `${`.
+- **Stacked PRs:** two stacked PRs that carry one version bump are no longer counted as a version collision.
+- **Triage:**
+  - the filter takes PR numbers;
+  - zero counts show as 0, not blank;
+  - titles get room;
+  - "Nothing blocking" lists the longest-open PRs first, not the most recently pushed.
+- **Plurals:** "1 PR", not "1 PRs".
+- **Phones:** long file paths wrap instead of widening the page.
+- **Project text:** the template names no project's PRs or labels. Left-out labels and the large-PR limit come from the profile, and a test checks this.
+
 ## 0.4.4 (2026-10-20)
 
 New command: **`pr-toolbox trailers`**. It rewrites commit trailers on your own open PRs, for example `Co-Authored-By: Claude …` to the `Assisted-by: Claude Code` a project asks for.

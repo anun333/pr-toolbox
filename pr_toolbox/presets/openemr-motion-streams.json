@@ -1,0 +1,917 @@
+{
+  "_about": "Hand-written judgement for the work-in-motion map: each area's target as its owners wrote it (quoted, with the source), the issues that plan it, how to recognise its open PRs, what to count at each release, and what to know before building there. Everything else on the page is extracted by intent.py.",
+  "rules_package": {
+    "name": "opencoreemr/openemr-phpstan-rules",
+    "packagist": "https://packagist.org/packages/opencoreemr/openemr-phpstan-rules",
+    "description": "PHPStan rules for OpenEMR core and module development",
+    "adopting_pr": 10263
+  },
+  "general": [
+    {
+      "text": "Never use existing legacy patterns as justification for writing new code the same way — follow the standards documented here instead.",
+      "source": "AGENTS.md, Legacy Code Is Not the Standard",
+      "url": "https://github.com/openemr/openemr/blob/master/AGENTS.md#legacy-code-is-not-the-standard"
+    },
+    {
+      "text": "New code goes in /src/, legacy helpers in /library/ … Every new PHP file starts with declare(strict_types=1).",
+      "source": "AGENTS.md, Coding Standards",
+      "url": "https://github.com/openemr/openemr/blob/master/AGENTS.md#coding-standards"
+    },
+    {
+      "text": "Inject all dependencies through the constructor. Never use new for service-layer objects inside business logic, never call static service locators, and never reach into global state ($GLOBALS, $_SESSION, $_GET, etc.) for dependencies.",
+      "source": "AGENTS.md, Dependency Injection",
+      "url": "https://github.com/openemr/openemr/blob/master/AGENTS.md#dependency-injection"
+    }
+  ],
+  "streams": [
+    {
+      "id": "request",
+      "title": "Request input",
+      "summary": "Superglobals give way to Symfony's Request object.",
+      "target": [
+        {
+          "text": "$_GET['k'] → $request->query->getString('k'); $_POST['k'] → $request->request->getString('k'); isset($_GET['k']) → $request->query->has('k'); $_FILES['k'] → $request->files->get('k').",
+          "source": "#11254, conversion map",
+          "url": "https://github.com/openemr/openemr/issues/11254",
+          "summary": true
+        },
+        {
+          "text": "Classes with a constructor should take a Request parameter rather than calling CurrentRequest::get() … CurrentRequest is a transitional seam for procedural entry points that have nowhere to inject, not a target architecture.",
+          "source": "#11254, after #13588 (merged 2026-08-17)",
+          "url": "https://github.com/openemr/openemr/issues/11254"
+        },
+        {
+          "text": "filter_input() is now considered transitional, not a destination — converting a superglobal to filter_input() satisfies the PHPStan rule but is a lateral move that grows a second surface we then have to drain again.",
+          "source": "#11254, Why Request and not filter_input()",
+          "url": "https://github.com/openemr/openemr/issues/11254"
+        },
+        {
+          "text": "Forbid direct access to $_GET, $_POST, $_REQUEST, $_FILES, $_COOKIE, and $_SERVER in favor of Symfony's Request object.",
+          "source": "PHPStan rule ForbiddenRequestGlobalsRule (core only)",
+          "url": "https://github.com/openemr/openemr/blob/master/tests/PHPStan/Rules/ForbiddenRequestGlobalsRule.php"
+        }
+      ],
+      "plan": [
+        11254,
+        11255
+      ],
+      "labels": [],
+      "title_re": "(?i)superglobal|\\$_(GET|POST|REQUEST)|symfony request|filter_input",
+      "paths": [],
+      "measures": [
+        {
+          "label": "superglobal reads",
+          "kind": "regex",
+          "pattern": "\\$_(GET|POST|REQUEST|FILES|COOKIE|SERVER)\\["
+        }
+      ],
+      "before": [
+        "Convert to the Request object, not to filter_input(): #11254 calls filter_input() a lateral move that would have to be drained again.",
+        "In a class, take a Request in the constructor; in a procedural page, CurrentRequest::get().",
+        "getString() returns '' for a missing key and throws on an array; use ->all('k') where a key can hold an array (#11254).",
+        "The Rector rule planned in #11255 skips any file that also writes a superglobal, so a new write keeps a whole file on the manual list."
+      ],
+      "direction": [
+        {
+          "id": "superglobals",
+          "label": "superglobal reads",
+          "pattern": "\\$_(GET|POST|REQUEST|FILES|COOKIE|SERVER)\\[",
+          "kind": "regex"
+        },
+        {
+          "id": "filter_input",
+          "label": "filter_input() calls",
+          "pattern": "\\bfilter_input\\s*\\(",
+          "kind": "regex"
+        }
+      ],
+      "todo": [
+        {
+          "kind": "batches",
+          "label": "Superglobal reads to the Request object, a folder per PR",
+          "issue": 11254,
+          "pattern": "\\$_(GET|POST|REQUEST|FILES|COOKIE|SERVER)\\[",
+          "order": [
+            "interface/reports",
+            "interface/forms"
+          ],
+          "flag_writes": "\\$_(GET|POST|REQUEST)\\[[^\\]]*\\]\\s*=(?!=)|unset\\(\\s*\\$_(GET|POST|REQUEST)",
+          "flag_request": "\\$_REQUEST\\[",
+          "says": {
+            "text": "Run it directory-at-a-time, each batch its own PR. Start on the tail (interface/reports/, read-only interface/forms/*/save.php) to prove the rule across hundreds of sites at low blast radius.",
+            "source": "#11254",
+            "url": "https://github.com/openemr/openemr/issues/11254"
+          }
+        }
+      ]
+    },
+    {
+      "id": "globals",
+      "title": "Settings, paths and session values",
+      "summary": "OEGlobalsBag keeps runtime settings; session data, paths and services are planned to move out of it.",
+      "target": [
+        {
+          "text": "Use OEGlobalsBag (extends Symfony ParameterBag) instead of $GLOBALS. Prefer typed getters over get() + cast.",
+          "source": "AGENTS.md, Database and Global Settings",
+          "url": "https://github.com/openemr/openemr/blob/master/AGENTS.md#database-and-global-settings"
+        },
+        {
+          "text": "OEGlobalsBag holds (either accidentally or on purpose) 6-7 different categories of things, only one of which is really actual runtime config.",
+          "source": "#12736 (Firehed)",
+          "url": "https://github.com/openemr/openemr/issues/12736"
+        }
+      ],
+      "keys_leaving": [
+        {
+          "issue": 12737,
+          "what": "session data",
+          "keys": [
+            "pid",
+            "encounter",
+            "bootstrap_pid",
+            "userauthorized",
+            "authUserID",
+            "ignoreAuth"
+          ],
+          "note": "the issue says these were AI discovered and may not be comprehensive"
+        },
+        {
+          "issue": 12739,
+          "what": "asset path config",
+          "keys": [
+            "v_js_includes",
+            "style",
+            "themes_static_relative",
+            "images_static_relative",
+            "assets_static_relative"
+          ]
+        },
+        {
+          "issue": 12740,
+          "what": "filesystem paths",
+          "keys": [
+            "OE_SITE_DIR",
+            "temporary_files_dir",
+            "webroot",
+            "rootdir",
+            "template_dir",
+            "baseModDir",
+            "zendModDir",
+            "OE_SITE_WEBROOT",
+            "webserver_root",
+            "customModDir",
+            "srcdir",
+            "web_root",
+            "OE_SITES_BASE"
+          ]
+        },
+        {
+          "issue": 12741,
+          "what": "services",
+          "keys": [
+            "adodb",
+            "oer_config",
+            "code_types",
+            "modules_application",
+            "dbh",
+            "credentials",
+            "GLOBALS_METADATA",
+            "ISSUE_TYPES"
+          ]
+        },
+        {
+          "issue": 12752,
+          "what": "bootstrap_pid, from the bag and sessions",
+          "keys": [
+            "bootstrap_pid"
+          ],
+          "title": "Remove bootstrap_pid from OEGlobalsBag and sessions"
+        },
+        {
+          "issue": 11258,
+          "what": "infrastructure values",
+          "keys": [
+            "webserver_root",
+            "vendor_dir",
+            "OE_SITES_BASE",
+            "webroot",
+            "eventDispatcher",
+            "restRequest"
+          ],
+          "note": "suggested homes: the Kernel, or a readonly Paths value object for webroot"
+        }
+      ],
+      "plan": [
+        12736,
+        12737,
+        12738,
+        12739,
+        12740,
+        12741,
+        12752,
+        11258,
+        12692,
+        13715
+      ],
+      "labels": [],
+      "title_re": "(?i)OEGlobalsBag|\\$GLOBALS|globals bag",
+      "paths": [
+        "src/Core/OEGlobalsBag.php"
+      ],
+      "measures": [
+        {
+          "label": "$GLOBALS[ reads",
+          "kind": "regex",
+          "pattern": "\\$GLOBALS\\["
+        }
+      ],
+      "before": [
+        "Read runtime settings with the typed getters (getString, getInt, getBoolean); core's PHPStan reports get() on a setting whose type is known.",
+        "Don't read session values such as pid from the bag in new code: #12807 routes pid through PatientSessionUtil.",
+        "Paths and services listed below are planned to leave the bag; take them through the constructor where you can."
+      ],
+      "direction": [
+        {
+          "id": "globals",
+          "label": "$GLOBALS reads",
+          "pattern": "\\$GLOBALS\\[",
+          "kind": "regex"
+        },
+        {
+          "id": "session",
+          "label": "$_SESSION reads",
+          "pattern": "\\$_SESSION\\[",
+          "kind": "regex"
+        }
+      ],
+      "todo": [
+        {
+          "kind": "keys"
+        }
+      ]
+    },
+    {
+      "id": "database",
+      "title": "Database access",
+      "summary": "QueryUtils now; DBAL underneath it; an ORM is a prototype.",
+      "target": [
+        {
+          "text": "Database: Use QueryUtils for queries.",
+          "source": "AGENTS.md, Database and Global Settings",
+          "url": "https://github.com/openemr/openemr/blob/master/AGENTS.md#database-and-global-settings"
+        },
+        {
+          "text": "As much as possible, make the QueryUtils implementation the \"real\" one and the global functions point to that instead, the inverse of the relationship right now.",
+          "source": "#10149 (Firehed)",
+          "url": "https://github.com/openemr/openemr/issues/10149"
+        },
+        {
+          "text": "This rule prevents use of: … Legacy sql.inc.php functions (use QueryUtils or DatabaseQueryTrait instead)",
+          "source": "PHPStan rule ForbiddenFunctionsRule (core only)",
+          "url": "https://github.com/openemr/openemr/blob/master/tests/PHPStan/Rules/ForbiddenFunctionsRule.php"
+        }
+      ],
+      "plan": [
+        10149,
+        10181,
+        10182,
+        10183,
+        10944,
+        11129
+      ],
+      "labels": [
+        "Database Layer"
+      ],
+      "title_re": "(?i)\\bDBAL\\b|QueryUtils|\\bORM\\b|sqlStatement|sqlQuery",
+      "paths": [
+        "src/Common/Database/",
+        "library/sql.inc.php"
+      ],
+      "measures": [
+        {
+          "label": "legacy sql.inc.php calls",
+          "kind": "regex",
+          "pattern": "\\bsql(Statement|Query|Insert|FetchArray|StatementNoLog|QueryNoLog|NumRows|BeginTrans|CommitTrans|RollbackTrans|ListFields|StatementThrowException)\\s*\\("
+        }
+      ],
+      "before": [
+        "Use QueryUtils; core's PHPStan reports the global sql* functions.",
+        "Transactions are moving to an abstraction (#10181, #10182, #10183). The ORM (#10944) is a draft prototype, not yet a base to build on."
+      ],
+      "direction": [
+        {
+          "id": "sql",
+          "label": "legacy sql.inc.php calls",
+          "pattern": "\\bsql(Statement|Query|Insert|FetchArray|StatementNoLog|QueryNoLog|NumRows|BeginTrans|CommitTrans|RollbackTrans|ListFields|StatementThrowException)\\s*\\(",
+          "kind": "regex"
+        }
+      ],
+      "todo": [
+        {
+          "kind": "issues",
+          "items": [
+            {
+              "issue": 10181,
+              "title": "QueryUtils::startTransaction family to the transaction abstraction",
+              "pattern": "QueryUtils::(startTransaction|commitTransaction|rollbackTransaction|inTransaction)\\s*\\("
+            },
+            {
+              "issue": 10182,
+              "title": "sqlBeginTrans family to the transaction abstraction",
+              "pattern": "\\bsql(BeginTrans|CommitTrans|RollbackTrans)\\s*\\("
+            },
+            {
+              "issue": 10183,
+              "title": "Raw SQL transaction statements to the abstraction",
+              "pattern": "[\\\"']\\s*(START TRANSACTION|BEGIN|COMMIT|ROLLBACK)\\s*;?\\s*[\\\"']"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "schema",
+      "title": "Schema changes",
+      "summary": "sql_upgrade files now; Doctrine Migrations later; several table changes are planned.",
+      "target": [
+        {
+          "text": "Schema changes: Use the sql_upgrade.php system. DO NOT use Doctrine Migrations yet, it is experimental and not fully adopted.",
+          "source": "AGENTS.md, Database and Global Settings",
+          "url": "https://github.com/openemr/openemr/blob/master/AGENTS.md#database-and-global-settings"
+        }
+      ],
+      "plan": [
+        10820,
+        12541,
+        12540,
+        10890,
+        11685,
+        11307,
+        11671
+      ],
+      "labels": [
+        "Database Migrations & Schema Changes"
+      ],
+      "title_re": "",
+      "paths": [
+        "sql/"
+      ],
+      "measures": [],
+      "before": [
+        "list_options is planned to get its own id column, keeping (list_id, option_id) as a unique key (#12541); code_types swaps its primary and unique keys (#12540).",
+        "Planned too: timestamp columns to datetime (#10890), one collation (#11685), MySQL's strictest settings (#11307).",
+        "Every schema PR edits the same upgrade file and v_database in version.php. The merge view shows who conflicts there."
+      ],
+      "todo": [
+        {
+          "kind": "issues",
+          "items": [
+            {
+              "issue": 12541
+            },
+            {
+              "issue": 12540
+            },
+            {
+              "issue": 10890
+            },
+            {
+              "issue": 11685
+            },
+            {
+              "issue": 11307
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "fhir",
+      "title": "FHIR",
+      "summary": "The generated R4 classes are being regenerated into a new namespace, one slice at a time; the service base class may gain return types.",
+      "target": [
+        {
+          "text": "Keep the old OpenEMR\\FHIR\\R4\\* and new OpenEMR\\FHIR\\Versions\\R4\\Types\\* namespaces coexisting throughout the migration. Each consumer slice swaps imports and adapts constructor/serialization patterns for that slice.",
+          "source": "#11871 (kojiromike)",
+          "url": "https://github.com/openemr/openemr/issues/11871"
+        },
+        {
+          "text": "Return types on FhirServiceBase's abstract methods: parseFhirResource(FHIRDomainResource $fhirResource): array, insertOpenEMRRecord($openEmrRecord): ProcessingResult, updateOpenEMRRecord($fhirResourceId, $updatedOpenEMRRecord): ProcessingResult, createProvenanceResource($dataRecord): ?FHIRProvenance.",
+          "source": "#14443 (Firehed, draft)",
+          "url": "https://github.com/openemr/openemr/pull/14443",
+          "summary": true
+        },
+        {
+          "text": "New endpoints should always use UUIDs as the primary identifier.",
+          "source": "#11029 (kojiromike)",
+          "url": "https://github.com/openemr/openemr/issues/11029"
+        }
+      ],
+      "plan": [
+        11871,
+        11872,
+        11873,
+        11874,
+        11875,
+        11649,
+        14443,
+        11029
+      ],
+      "labels": [
+        "FHIR"
+      ],
+      "title_re": "(?i)\\bfhir\\b",
+      "paths": [
+        "src/Services/FHIR/",
+        "src/RestControllers/FHIR/",
+        "src/FHIR/",
+        "apis/routes/_rest_routes_fhir"
+      ],
+      "measures": [
+        {
+          "label": "files using OpenEMR\\FHIR\\R4 outside the generated tree",
+          "kind": "files_with",
+          "pattern": "OpenEMR\\\\FHIR\\\\R4\\\\",
+          "scope": [
+            "src",
+            "interface",
+            "library",
+            "apis",
+            "portal"
+          ],
+          "exclude": [
+            "src/FHIR/R4/"
+          ]
+        }
+      ],
+      "before": [
+        "If #14443 lands, every class that overrides those four methods needs its return types; PHP refuses an override without them. Open PRs that add such classes are listed under the merge view's signature breaks.",
+        "New code still imports the old OpenEMR\\FHIR\\R4 classes; the new namespace arrives with #11875, and the per-slice PRs (#11872) swap imports.",
+        "New REST endpoints use UUIDs (#11029)."
+      ],
+      "todo": [
+        {
+          "kind": "issues",
+          "items": [
+            {
+              "issue": 11874,
+              "title": "Land the php-fhir generator tooling"
+            },
+            {
+              "issue": 11875,
+              "title": "Add the new generated classes alongside the old namespace",
+              "after": [
+                11874
+              ]
+            },
+            {
+              "issue": 11872,
+              "title": "Migrate consumers to the new namespace, one slice per PR",
+              "after": [
+                11875
+              ],
+              "pattern": "use OpenEMR\\\\FHIR\\\\R4\\\\",
+              "exclude": "src/FHIR/R4/"
+            },
+            {
+              "issue": 11873,
+              "title": "Remove the old OpenEMR\\FHIR\\R4 tree",
+              "after": [
+                11872
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "legacy",
+      "title": "Legacy include files and controllers",
+      "summary": "Procedural .inc.php files become service classes behind thin shims; controllers move to src/.",
+      "target": [
+        {
+          "text": "Move each function body to a (static) method on a service class under src/ with a proper namespace. … Keep the .inc.php file as a thin delegator … preserves all existing call sites and require_once usage without touching callers.",
+          "source": "#11674 (kojiromike), the tracker of 72 files",
+          "url": "https://github.com/openemr/openemr/issues/11674"
+        },
+        {
+          "text": "The legacy controllers in /controllers/C_*.class.php should be moved to src/ with PSR-4 naming conventions … namespace OpenEMR\\Controllers.",
+          "source": "#11167 (kojiromike)",
+          "url": "https://github.com/openemr/openemr/issues/11167"
+        }
+      ],
+      "plan": [
+        11674,
+        11167,
+        10487,
+        11815,
+        11506,
+        11726
+      ],
+      "labels": [],
+      "title_re": "(?i)\\.inc\\.php|into (a )?service|to service class|move .* to src",
+      "paths": [],
+      "measures": [
+        {
+          "label": "tracker items ticked in #11674",
+          "kind": "checklist",
+          "issue": 11674
+        }
+      ],
+      "before": [
+        "Call the service class where a shim exists. When you change a tracked .inc.php, the tracker's pattern is the expected shape, and the shim keeps every caller working.",
+        "Email: about 25 places create MyMailer directly; #10487 plans one EmailService."
+      ],
+      "todo": [
+        {
+          "kind": "checklist",
+          "issue": 11674,
+          "item_re": "^\\s*- \\[ \\] `([^`]+)`",
+          "says": {
+            "text": "Incremental — each file becomes a separate PR when someone touches adjacent code.",
+            "source": "#11674",
+            "url": "https://github.com/openemr/openemr/issues/11674"
+          }
+        }
+      ]
+    },
+    {
+      "id": "background",
+      "title": "Background tasks",
+      "summary": "One runner with REST and CLI entry points; typed messages and code-declared schedules are planned.",
+      "target": [
+        {
+          "text": "Once #11662 lands, OpenEMR will have one execution core (BackgroundServiceRunner) and two entry points (REST + CLI) … this epic paves a path forward that modules can opt into incrementally.",
+          "source": "#11698 (kojiromike)",
+          "url": "https://github.com/openemr/openemr/issues/11698"
+        },
+        {
+          "text": "Its functionality is now fully covered by BackgroundServiceRunner via two clean entry points (REST and bin/console).",
+          "source": "#11667, on library/ajax/execute_background_services.php",
+          "url": "https://github.com/openemr/openemr/issues/11667"
+        }
+      ],
+      "plan": [
+        11662,
+        11698,
+        11667,
+        11671
+      ],
+      "labels": [
+        "Background Services"
+      ],
+      "title_re": "(?i)background service|scheduled task|cron",
+      "paths": [
+        "src/Services/Background/",
+        "library/ajax/execute_background_services.php"
+      ],
+      "measures": [],
+      "before": [
+        "Don't add callers of library/ajax/execute_background_services.php; #11667 plans its removal.",
+        "Modules that insert background_services rows keep working; #11698 adds a code-declared path they can opt into."
+      ],
+      "todo": [
+        {
+          "kind": "issues",
+          "items": [
+            {
+              "issue": 11667,
+              "title": "Remove library/ajax/execute_background_services.php",
+              "pattern": "execute_background_services\\.php"
+            },
+            {
+              "issue": 11671,
+              "title": "Replace the running = -1 sentinel with a last_run_at column"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ui",
+      "title": "Templates and front end",
+      "summary": "Twig for templates; smarty_legacy and jQuery UI on the way out; Bootstrap 5 in a draft.",
+      "target": [
+        {
+          "text": "Migrate to Twig or modern Smarty (via composer) … Remove library/smarty_legacy/ directory",
+          "source": "#10111 (kojiromike)",
+          "url": "https://github.com/openemr/openemr/issues/10111"
+        },
+        {
+          "text": "jquery-ui is nearing the end of its road.",
+          "source": "#2999 (bradymiller)",
+          "url": "https://github.com/openemr/openemr/issues/2999"
+        },
+        {
+          "text": "Master ships bootstrap 4.6.2 and jquery-ui 1.12.1; #7934 (tywrenn, draft) moves to Bootstrap 5. library/smarty_legacy/ itself went in 8.2.0 (#12435).",
+          "source": "package.json on master; #7934",
+          "url": "https://github.com/openemr/openemr/pull/7934",
+          "summary": true
+        }
+      ],
+      "plan": [
+        10111,
+        2999,
+        3531,
+        3720,
+        7934
+      ],
+      "labels": [
+        "Twig Migration",
+        "UI Modernization",
+        "jquery-ui removal"
+      ],
+      "title_re": "(?i)\\btwig\\b|smarty|bootstrap|jquery",
+      "paths": [],
+      "measures": [
+        {
+          "label": "Smarty templates (all now in the phpGACL admin)",
+          "kind": "files",
+          "pattern": "^gacl/admin/templates/.*\\.tpl$"
+        },
+        {
+          "label": "Twig templates",
+          "kind": "files",
+          "pattern": "\\.twig$"
+        }
+      ],
+      "before": [
+        "New pages render Twig templates; AGENTS.md describes the Twig template tests.",
+        "Avoid new jQuery UI widgets; the date and time picker replacement is open (#3720).",
+        "Markup written against Bootstrap 4 classes becomes part of #7934's migration."
+      ],
+      "direction": []
+    },
+    {
+      "id": "io",
+      "title": "HTTP, logging and mail",
+      "summary": "PSR-18 HTTP clients, PSR-3 logging, one mail path.",
+      "target": [
+        {
+          "text": "Migrating to PSR-18 compliant interface (Psr\\Http\\Client\\ClientInterface) … Using Guzzle as the default implementation.",
+          "source": "#9144 (kojiromike)",
+          "url": "https://github.com/openemr/openemr/issues/9144"
+        },
+        {
+          "text": "Never concatenate or interpolate variables into log messages. Use PSR-3 context arrays.",
+          "source": "AGENTS.md, Error Handling and Logging",
+          "url": "https://github.com/openemr/openemr/blob/master/AGENTS.md#error-handling-and-logging"
+        },
+        {
+          "text": "error_log() (use ServiceContainer::getLogger() instead) … mail() (use MyMailer instead, so sends respect the configured EMAIL_METHOD/SMTP settings)",
+          "source": "PHPStan rule ForbiddenFunctionsRule (core only)",
+          "url": "https://github.com/openemr/openemr/blob/master/tests/PHPStan/Rules/ForbiddenFunctionsRule.php"
+        }
+      ],
+      "plan": [
+        9144,
+        9688,
+        11822,
+        10487
+      ],
+      "labels": [],
+      "title_re": "(?i)guzzle|\\bcurl\\b|psr-3|psr-18|error_log|logger|mailer",
+      "paths": [],
+      "measures": [
+        {
+          "label": "curl_* calls",
+          "kind": "regex",
+          "pattern": "\\bcurl_[a-z_]+\\s*\\("
+        },
+        {
+          "label": "error_log() calls",
+          "kind": "regex",
+          "pattern": "\\berror_log\\s*\\("
+        }
+      ],
+      "before": [
+        "Take a ClientInterface in the constructor; core's PHPStan reports new curl_* calls.",
+        "Log through ServiceContainer::getLogger() with context arrays; core's PHPStan reports new error_log() calls."
+      ],
+      "direction": [
+        {
+          "id": "curl",
+          "label": "curl_* calls",
+          "pattern": "\\bcurl_[a-z_]+\\s*\\(",
+          "kind": "regex"
+        },
+        {
+          "id": "error_log",
+          "label": "error_log() calls",
+          "pattern": "\\berror_log\\s*\\(",
+          "kind": "regex"
+        },
+        {
+          "id": "mail",
+          "label": "mail() calls",
+          "pattern": "(?<![\\w>:$\\\\])mail\\s*\\(",
+          "kind": "regex"
+        }
+      ],
+      "todo": [
+        {
+          "kind": "batches",
+          "label": "curl_* calls to a PSR-18 client",
+          "issue": 9144,
+          "pattern": "\\bcurl_[a-z_]+\\s*\\(",
+          "says": {
+            "text": "Migrating all curl calls and Symfony HttpClient to unified approach.",
+            "source": "#9144",
+            "url": "https://github.com/openemr/openemr/issues/9144"
+          }
+        },
+        {
+          "kind": "batches",
+          "label": "error_log() calls to the PSR-3 logger",
+          "issue": 11822,
+          "pattern": "\\berror_log\\s*\\(",
+          "says": {
+            "text": "error_log() (use ServiceContainer::getLogger() instead).",
+            "source": "PHPStan rule ForbiddenFunctionsRule",
+            "url": "https://github.com/openemr/openemr/blob/master/tests/PHPStan/Rules/ForbiddenFunctionsRule.php"
+          }
+        }
+      ]
+    },
+    {
+      "id": "units",
+      "title": "Units of measure",
+      "summary": "UCUM as the one unit vocabulary; vitals conversions move onto a shared layer.",
+      "target": [
+        {
+          "text": "Map every stored or list unit to UCUM, validate through Ucum, and write float-returning conversions to create a shared unit layer. Move vitals display and conversions onto this layer and remove duplicated factors. Stop exporters from claiming UCUM for invalid units.",
+          "source": "#14698 (kojiromike, 2026-10-19)",
+          "url": "https://github.com/openemr/openemr/issues/14698"
+        }
+      ],
+      "plan": [
+        14698,
+        14701
+      ],
+      "labels": [],
+      "title_re": "(?i)vitals|ucum|units? of measure|unit conversion|conversion (factor|formula)",
+      "paths": [],
+      "measures": [],
+      "before": [
+        "Conversion factors: #14698 plans one shared layer, so new conversion code in a form or exporter is likely to move."
+      ],
+      "todo": [
+        {
+          "kind": "issues",
+          "items": [
+            {
+              "issue": 14701,
+              "title": "Exact temperature and length conversions (two open PRs: choose one)"
+            },
+            {
+              "issue": 14698,
+              "title": "A shared UCUM unit layer, then vitals, exporters, lists and ingest on it"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "labs",
+      "title": "Lab orders and results",
+      "summary": "Order and result processing is being restructured; the DORN module may leave core for a Composer package.",
+      "target": [
+        {
+          "text": "Extract HL7 order and result processing into strategy patterns.",
+          "source": "#10924 (jbaiad), title",
+          "url": "https://github.com/openemr/openemr/pull/10924"
+        },
+        {
+          "text": "Install oe-module-dorn as a Composer dependency.",
+          "source": "#12398 (claimrevolution), title",
+          "url": "https://github.com/openemr/openemr/pull/12398"
+        },
+        {
+          "text": "Overhaul order generation with modern techniques.",
+          "source": "#10815 (Firehed), title",
+          "url": "https://github.com/openemr/openemr/issues/10815"
+        }
+      ],
+      "plan": [
+        10924,
+        10925,
+        10926,
+        10815,
+        12398,
+        8130
+      ],
+      "labels": [
+        "Labs"
+      ],
+      "title_re": "(?i)\\blab\\b|hl7|procedure order|placer|dorn",
+      "paths": [
+        "interface/orders/",
+        "interface/procedure_tools/",
+        "src/Services/ProcedureService.php",
+        "interface/modules/custom_modules/oe-module-dorn/"
+      ],
+      "measures": [],
+      "before": [
+        "If #12398 lands, oe-module-dorn's files leave this repository; changes to them would go to the package instead."
+      ]
+    },
+    {
+      "id": "removals",
+      "title": "Planned removals",
+      "summary": "Code the maintainers have said will go, and where its replacement is.",
+      "target": [],
+      "removals": [
+        {
+          "what": "MedEx",
+          "issue": 11182,
+          "note": "It is going to move into a custom module."
+        },
+        {
+          "what": "RestConfig",
+          "issue": 10079,
+          "pr": 10082
+        },
+        {
+          "what": "library/ajax/execute_background_services.php",
+          "issue": 11667,
+          "note": "BackgroundServiceRunner covers it (REST and bin/console)."
+        },
+        {
+          "what": "laminas/laminas-json and laminas/laminas-loader",
+          "issue": 8252
+        },
+        {
+          "what": "the drug-drug interaction service in core",
+          "issue": 9772,
+          "note": "remove or replace"
+        },
+        {
+          "what": "library/smarty_legacy/",
+          "issue": 10111,
+          "pr": 12435,
+          "done": "removed in 8.2.0 by #12435 (PostCalendar to Twig); #10111 is still open"
+        },
+        {
+          "what": "literallycanvas",
+          "issue": 2977,
+          "note": "replace"
+        },
+        {
+          "what": "interface/main/backup.php",
+          "issue": 11905,
+          "pr": 13471,
+          "done": "removed in 8.3.0; layout and list export documented on the wiki and in #14522"
+        }
+      ],
+      "plan": [
+        11182,
+        10079,
+        11667,
+        8252,
+        9772,
+        10111,
+        2977,
+        11905
+      ],
+      "labels": [
+        "Deprecated",
+        "Status: Pending Removal"
+      ],
+      "title_re": "(?i)\\bremove\\b|deprecat",
+      "paths": [],
+      "measures": [],
+      "before": [],
+      "todo": [
+        {
+          "kind": "issues",
+          "items": [
+            {
+              "issue": 11182,
+              "title": "Remove MedEx"
+            },
+            {
+              "issue": 10079,
+              "title": "Remove RestConfig"
+            },
+            {
+              "issue": 11667,
+              "title": "Remove library/ajax/execute_background_services.php"
+            },
+            {
+              "issue": 8252,
+              "title": "Remove laminas/laminas-json and laminas/laminas-loader"
+            },
+            {
+              "issue": 9772,
+              "title": "Remove the drug-drug interaction service in core"
+            },
+            {
+              "issue": 2977,
+              "title": "Remove literallycanvas"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,98 @@
+{
+  "_about": "Known cases each check must find (or must not flag). A control whose PRs are no longer all open is retired, not failed; replace it with a current case when that happens.",
+  "controls": [
+    {
+      "name": "signature: #14443's FhirServiceBase return types refuse #14708's override",
+      "prs": [
+        14443,
+        14708
+      ],
+      "in": "signature",
+      "match": {
+        "changes": 14443,
+        "overrides": 14708
+      }
+    },
+    {
+      "name": "signature: #14711's ': null' is narrower, so it must not be flagged",
+      "prs": [
+        14443,
+        14711
+      ],
+      "in": "signature",
+      "match": {
+        "changes": 14443,
+        "overrides": 14711
+      },
+      "expect": "absent"
+    },
+    {
+      "name": "shared route: #11222 and #11446 both add GET /api/admin/users",
+      "prs": [
+        11222,
+        11446
+      ],
+      "in": "shared_name",
+      "match": {
+        "kind": "route",
+        "name": "GET /api/admin/users"
+      },
+      "contains": [
+        11222,
+        11446
+      ]
+    },
+    {
+      "name": "shared table: oidc_external_identity in #11416, #11793 and #14091 (two of them over 150 files)",
+      "prs": [
+        11416,
+        11793,
+        14091
+      ],
+      "in": "shared_name",
+      "match": {
+        "kind": "table",
+        "name": "oidc_external_identity"
+      },
+      "contains": [
+        11416,
+        11793,
+        14091
+      ]
+    },
+    {
+      "name": "stacked: #10926 is built on #10925",
+      "prs": [
+        10925,
+        10926
+      ],
+      "in": "stacked",
+      "match": {
+        "contained": 10925,
+        "in": 10926
+      }
+    },
+    {
+      "name": "text conflict: #14723 and #14738 fix #14701 in the same lines",
+      "prs": [
+        14723,
+        14738
+      ],
+      "in": "text_conflict",
+      "match": {
+        "prs": [
+          14723,
+          14738
+        ]
+      }
+    },
+    {
+      "name": "earlier release's upgrade file: #7279 adds SQL to the 7.0.2-to-7.0.3 upgrade, which only sites upgrading from before 7.0.3 run",
+      "prs": [
+        7279
+      ],
+      "in": "stale_upgrade.prs",
+      "key": 7279
+    }
+  ]
+}

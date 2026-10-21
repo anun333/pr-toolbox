@@ -23,7 +23,7 @@ They don't comment, label, ping or re-run anything on GitHub. `health` and `chec
 ## Install
 
 ```
-pipx install git+https://github.com/anun333/pr-toolbox@v0.4.2
+pipx install git+https://github.com/anun333/pr-toolbox@v0.4.3
 ```
 
 Or clone the repository and run `./pr-toolbox` from it; nothing needs installing.
@@ -243,6 +243,14 @@ Caches are keyed by the base's commit and each PR's head and merge base. When th
 **Care.** The page names every open PR and its author, with failing CI and conflicts. It is generated locally and posted nowhere; show it to the project's maintainers before anyone else.
 
 **Prior art.** Merge queues (GitHub's, Mergify, bors) test one combination at merge time and only for what tests cover; Gerrit lists conflicts with other changes; ConflictBot and Rust's triagebot comment on PRs. `motion` looks ahead across every open PR at once, adds the project's plan, and comments nowhere.
+
+### With Claude Code
+
+[`skills/pr-toolbox-motion/SKILL.md`](skills/pr-toolbox-motion/SKILL.md) is a [Claude Code](https://claude.com/claude-code) skill for building the map, reading candidate pairs, writing a profile and changing `motion` itself. It covers the rules: the page posts nothing, quotes the maintainers and doesn't paraphrase them, every check must be able to fail, and "Nothing blocking" is not a review. Copy or link it into your skills folder:
+
+```
+ln -s "$PWD/skills/pr-toolbox-motion" ~/.claude/skills/pr-toolbox-motion
+```
 
 ## The OpenEMR profile
 

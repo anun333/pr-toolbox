@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.3 (2026-10-20)
+
+- A [Claude Code](https://claude.com/claude-code) skill for `motion`: [`skills/pr-toolbox-motion/SKILL.md`](skills/pr-toolbox-motion/SKILL.md). It covers building the map, reading candidate pairs for semantic clashes, writing a project profile, and changing `motion` itself, with the rules and the traps met building it.
+- A test checks that every `pr-toolbox motion` subcommand the skill names exists.
+
+No code changed.
+
 ## 0.4.2 (2026-10-20)
 
 - `pr-toolbox motion packets` now records each pair's heads in `semantic/heads.json`. Before, the page needed that file written by hand, and failed without it once verdicts existed.

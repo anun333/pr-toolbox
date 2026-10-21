@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -256,6 +257,22 @@ class PhpSignatures(unittest.TestCase):
             self.assertTrue(any(x["changes"] == 10 and x["overrides"] == 11 and x["method"] == "Base::make" for x in found), found)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
+
+
+class Skill(unittest.TestCase):
+    """The Claude Code skill must describe the tool as it is."""
+
+    def test_frontmatter_and_subcommands(self) -> None:
+        text = (ROOT / "skills" / "pr-toolbox-motion" / "SKILL.md").read_text()
+        front = text.split("---")[1]
+        self.assertIn("name: pr-toolbox-motion", front)
+        self.assertRegex(front, r"description: .{100,}")
+        named = set(re.findall(r"(?:^|`)pr-toolbox motion ([a-z]+)\b", text, re.M))  # commands in code, not prose
+        real = {"build", "candidates", "packets", "compare"}
+        self.assertTrue(named, "the skill names its commands")
+        self.assertLessEqual(named - {"compare", "build"}, real, f"unknown subcommands: {named - real}")
+        for path in re.findall(r"`(pr_toolbox/[\w/.-]+)`", text):
+            self.assertTrue((ROOT / path).exists(), f"the skill names {path}, which doesn't exist")
 
 
 class Profiles(unittest.TestCase):

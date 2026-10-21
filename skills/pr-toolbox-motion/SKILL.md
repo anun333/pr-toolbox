@@ -18,6 +18,7 @@ pr-toolbox motion --repo <clone> [--cache DIR] [--out page.html] [--threads 4]
 pr-toolbox motion --skip-fetch              # rebuild from the inputs already in the cache
 pr-toolbox motion --master <sha>            # replay a build at a pinned base
 pr-toolbox motion compare <findings a> <findings b>   # two builds of the same commits must agree
+pr-toolbox motion check-page [page.html] [--shots DIR] # open the page in a headless browser and check it
 ```
 
 The build runs fetch, audit, controls, then the page. It stops in two cases:
@@ -34,6 +35,27 @@ Caches are keyed by the base's commit and each PR's head and merge base. When th
 `incremental.rule_violations` in the audit summary must stay empty. `summary.seconds` times each stage.
 
 Every PR card names the commits it was computed on, and the git commands that reproduce it. Run one yourself before relying on a new kind of finding. Rebuild before showing the page to anyone: it is a snapshot, and stale findings about other people's PRs cost trust.
+
+Then run `check-page` on the rebuilt page, and publish only if it passes. It opens the page at desktop width, at phone width and in dark mode, and checks what a reader meets: script errors, sideways scrolling, empty sections, links to nowhere, code printed as text, and whether the counts, filters, groups, sorting, folded sections and cards do what they say. It uses this Python's Playwright, or Playwright's Docker image.
+
+Each build saves a small snapshot of every PR in the cache's `history/`. The page's "since the last build" panel compares with the newest snapshot at least `WIM_SINCE_HOURS` (default 12) old. A nightly rebuild gives it a daily rhythm. `WIM_OFFLINE` skips asking GitHub whether a PR that disappeared was merged or closed.
+
+## What the page claims, exactly
+
+Maintainers will act on these definitions, so keep them exact and keep the page's wording matching them:
+- **Stands alone:** no decision link with another open PR. Order doesn't matter.
+- **Decision links:** a code conflict, a break that merges cleanly, a stack, a shared name, the same issue, or a clash a second reading confirmed.
+- **What never joins PRs into a group:** overlaps only in mechanical files (version files, migrations, lint baselines). They need a rebase, not a decision, and they would join much of the queue into one group.
+- **PRs over the file limit** were never compared pair by pair, so they never count as standing alone.
+- **Group:** PRs joined by decision links. Decide their order together.
+- **Nothing blocking** requires all of these:
+  - out of draft and merging onto the base;
+  - CI passing, with checks read one by one: the profile's `health_ignore` names are left out and a cancelled run is not a failure;
+  - no changes requested by a maintainer;
+  - no code conflict, no break, nothing the plan retires;
+  - version number and caps whole.
+
+  It lists the oldest first. It is never a recommendation to merge. The page and the build each work it out, and `check-page` holds them to the same count.
 
 ## Read for semantic clashes (optional, judgement)
 
@@ -94,12 +116,21 @@ Add a `motion` section to `.pr-toolbox.json`. Every key has a neutral default, a
 15. `dict.get(key, default)` returns None when the key is present with a null value. Write `get(key) or default`.
 16. An incremental rule must follow how a merge decides, which is file by file. Prove any new reuse rule with `motion compare` against a full build.
 17. For PHP projects checked inside a dev container: after merging the base into a branch, a stale `vendor/` makes PHPStan report errors in files nobody touched. Reinstall dependencies first.
+18. GitHub's `statusCheckRollup` state counts Codecov and cancelled runs, and can lag behind the checks themselves. Read each check. On OpenEMR, the rollup marked 28 PRs as failing over a coverage report alone.
+19. In the page's JavaScript, `"${x}"` in double quotes prints the dollar sign and braces; only backtick strings fill in values. A test scans the page's script for it.
+20. A list of PRs to review next must leave out those a maintainer requested changes on: the next move there is the author's.
+21. Sorting by last update puts your own PRs first right after you force-push them. A list for maintainers sorts by age.
+22. Two stacked PRs share one version bump by design. That is not a collision.
+23. Measure the page as a reader first meets it, with nothing opened. A check that opens sections first measures something else.
+24. A check run on the page before a change must fail, or it proves nothing. Of four checks written for one release, two passed on the old page: one checked a case-sensitive word against capitals the page displays, and one tested a bug the old page didn't have yet.
 
 ## Changing pr-toolbox motion
 
 - Work on a branch.
 - Add a fixture test for any new check, with a control. Run `python3 -m unittest discover -s tests`, also with `WIM_THREADS=4`.
 - When the engine changed, prove a build of a real repository equals the previous version's for the same commits, with `motion compare`.
+- When the page changed, add a check to `page_check.py` for each change, and show that it fails on the page built before the change. Then rebuild and run `check-page` until it passes.
+- The page template names no project. A project's classes, settings, PR numbers and labels come from its profile, and a test looks for leaks.
 - Before releasing:
   1. Scan the diff for private material.
   2. Push the branch and wait for CI on Python 3.10 to 3.13.

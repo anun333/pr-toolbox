@@ -306,8 +306,10 @@ class Skill(unittest.TestCase):
         front = text.split("---")[1]
         self.assertIn("name: pr-toolbox-motion", front)
         self.assertRegex(front, r"description: .{100,}")
-        named = set(re.findall(r"(?:^|`)pr-toolbox motion ([a-z]+)\b", text, re.M))  # commands in code, not prose
-        real = {"build", "candidates", "packets", "compare"}
+        named = set(re.findall(r"(?:^|`)pr-toolbox motion ([a-z][a-z-]*)\b", text, re.M))  # commands in code, not prose
+        # the subcommands motion's command line accepts, read from its own source rather than listed here
+        real = set(re.findall(r'"([a-z-]+)"', re.search(r"argv\[0\] in \{([^}]*)\}", (ROOT / "pr_toolbox/motion/cli.py").read_text()).group(1)))
+        self.assertIn("check-page", real)
         self.assertTrue(named, "the skill names its commands")
         self.assertLessEqual(named - {"compare", "build"}, real, f"unknown subcommands: {named - real}")
         for path in re.findall(r"`(pr_toolbox/[\w/.-]+)`", text):
@@ -405,6 +407,37 @@ class CiState(unittest.TestCase):
                 "contexts": {"nodes": [{"name": n, "conclusion": None if c == "IN_PROGRESS" else c, "status": "IN_PROGRESS" if c == "IN_PROGRESS" else "COMPLETED"} for n, c in checks]}}}}]}}
             health = pr_health.summarize(node, "me", re.compile(ignore))
             self.assertEqual((health["ci"], health["failing"]), (words[state], failing), checks)
+
+
+class CheckPage(unittest.TestCase):
+    """check-page runs the browser checks with this Python's Playwright, else in Playwright's image, else says what it needs."""
+
+    def setUp(self) -> None:
+        self.page = Path(tempfile.mkdtemp()) / "page.html"
+        self.page.write_text("<html></html>")
+
+    def test_a_missing_page_is_named(self) -> None:
+        from unittest import mock
+        with mock.patch("sys.stderr") as err:
+            self.assertEqual(2, cli.main(["check-page", str(self.page.parent / "nope.html")]))
+        self.assertIn("no page at", "".join(c.args[0] for c in err.write.call_args_list))
+
+    def test_without_playwright_or_docker_it_says_what_it_needs(self) -> None:
+        from unittest import mock
+        with mock.patch.object(cli.importlib.util, "find_spec", return_value=None), mock.patch.object(cli.shutil, "which", return_value=None), \
+                mock.patch("sys.stderr") as err:
+            self.assertEqual(2, cli.main(["check-page", str(self.page)]))
+        self.assertIn("needs Playwright", "".join(c.args[0] for c in err.write.call_args_list))
+
+    def test_with_docker_it_runs_playwrights_image_on_the_page_read_only(self) -> None:
+        from unittest import mock
+        with mock.patch.object(cli.importlib.util, "find_spec", return_value=None), mock.patch.object(cli.shutil, "which", return_value="/usr/bin/docker"), \
+                mock.patch.object(cli.subprocess, "run", return_value=mock.Mock(returncode=0)) as run:
+            self.assertEqual(0, cli.main(["check-page", str(self.page)]))
+        cmd = run.call_args.args[0]
+        self.assertEqual(["docker", "run", "--rm"], cmd[:3])
+        self.assertIn(f"{self.page.resolve()}:/page/index.html:ro", cmd)
+        self.assertIn(cli.PLAYWRIGHT_IMAGE, cmd)
 
 
 class Profiles(unittest.TestCase):

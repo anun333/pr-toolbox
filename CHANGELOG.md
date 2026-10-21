@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.5.0 (2026-10-21)
+
+- **`pr-toolbox motion check-page`:** opens a built page in a headless browser, at desktop and phone widths and in dark mode, and checks what a reader meets. That covers:
+  - script errors, sideways scrolling, empty sections, links to nowhere and code printed as text;
+  - whether the counts, filters, groups, sorting, folded sections, lookup and cards do what they say;
+  - that the page and the build agree on "Nothing blocking".
+
+  It runs with this Python's Playwright if installed, otherwise in Playwright's Docker image, and exits 1 if any check fails. Each check was first shown to fail on a page that had the problem.
+- **Group diagrams:** every group is drawn: circles for its PRs, lines styled by why two are linked, circles marking "Nothing blocking", failing CI and drafts. Selecting a circle, or pressing Enter on it, opens that PR's card.
+- **Triage marks only what is out of the ordinary:** CI passing, merging cleanly, no review yet and a free version number are plain text; pills are kept for what needs attention.
+- **Hover titles:** every PR number shows its title and author on hover.
+- **Phones:** the summary strip comes before the section links, and the tiles and header drop their small print, so the counts are on the first screen.
+- **The skill** covers checking the page, what each count on the page means, the "since" history, and eight new traps.
+- **Tests:** the skill's test reads the real subcommands from the command line's own source.
+
 ## 0.4.9 (2026-10-21)
 
 - **Since the last build:** a panel under the summary strip lists what changed. It compares with the newest build at least 12 hours older (`WIM_SINCE_HOURS`), so rebuilding twice in a day still reads as "since yesterday"; until a day of history exists, it compares with the oldest build kept. It covers:

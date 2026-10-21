@@ -255,6 +255,7 @@ pr-toolbox trailers --mine --replace '^Co-Authored-By: Claude' 'Assisted-by: Cla
 ```
 pr-toolbox motion                 # fetch, audit, controls, page: ~7 minutes for 300 PRs on 4 threads, seconds when little moved
 pr-toolbox motion --skip-fetch    # rebuild from the inputs already in the cache
+pr-toolbox motion check-page      # open the page in a headless browser and check what a reader meets
 ```
 
 It writes one self-contained HTML page (`~/.cache/pr-toolbox-motion/work-in-motion.html` unless `--out` says otherwise):
@@ -263,12 +264,16 @@ It writes one self-contained HTML page (`~/.cache/pr-toolbox-motion/work-in-moti
 - **The maintainers' plan per area,** quoted from their own documents and issues, each quote checked word for word against its source on every build: a quote that drifts stops the build.
 - **A path forward:** decide between overlapping PRs, review what nothing blocks, rebase where the fix is mechanical, then pick up new work in each plan's own order, on files no open PR changes.
 - **At a glance, on the first screen:** how many PRs stand alone (no code conflict, break, stack, duplicate or clash with another open PR, so their order doesn't matter), and how many groups of linked PRs need their order decided. Each count opens the list behind it. Overlaps only in mechanical files join no group, and PRs too large to compare never count as standing alone.
+- **Each group drawn:** circles for its PRs, lines styled by why two are linked (code conflict, break, clash, built on, same issue or name), circles marking "Nothing blocking", failing CI and drafts. Selecting a circle opens that PR's card.
 - **Since the last build:** what changed since the newest build at least 12 hours older (`WIM_SINCE_HOURS`): PRs merged or closed, new PRs, PRs that entered or left "Nothing blocking" and why, new code conflicts, PRs that newly need a rebase, maintainer reviews. Each build keeps a small snapshot in the cache's `history/`.
 - **Folded sections:** each area, and each area's remaining work in the path forward, is one line until opened; a link into one opens it.
-- **A triage table** of every open PR with CI, maintainer review, conflicts, breaks, fit with the plan and size, filterable. Its "Nothing blocking" view is not a review: it says only that reviewing a PR won't be wasted on a rebase or a collision.
+- **A triage table** of every open PR with CI, maintainer review, conflicts, breaks, fit with the plan and size, filterable, and sortable on every column. Ordinary states are plain text, so what needs attention stands out. Its "Nothing blocking" view lists the oldest first and leaves out PRs with changes requested. It is not a review: it says only that reviewing a PR won't be wasted on a rebase or a collision. CI is read check by check, leaving out the profile's `health_ignore` names (Codecov by default).
+- **How to rebuild it:** the page names the pr-toolbox version that built it and gives the commands to rebuild it, from the same commits or from today's.
 - **Evidence on every claim:** each PR card names the commits it was computed on and the git commands that reproduce it.
 
 Caches are keyed by the base's commit and each PR's head and merge base. When the base moves, only PRs and pairs touching a file it changed are merged again; reused results are re-merged and compared whenever they are needed, and a disagreement is reported (`incremental.rule_violations`). `--master <sha>` replays a build at a pinned base, and `pr-toolbox motion compare A B` checks that two findings files for the same commits agree.
+
+**Checking the page.** `pr-toolbox motion check-page [page.html] [--shots DIR]` opens a built page in a headless browser, at desktop and phone widths and in dark mode. It checks what a reader meets: script errors, sideways scrolling, empty sections, links to nowhere, code printed as text, and whether the counts, filters, groups, sorting, folded sections and cards do what they say. It uses this Python's Playwright if installed, otherwise Playwright's Docker image (`mcr.microsoft.com/playwright/python`). It exits 1 if any check fails; publish only a page that passes.
 
 **Controls.** Every build first checks known cases from the profile: each must be found (or, for a negative case, must not be), or the build stops instead of printing a silent zero. The page lists the results.
 

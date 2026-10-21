@@ -10,11 +10,13 @@ records as data; runs nothing from any PR, and posts nothing anywhere.
     pr-toolbox motion candidates [--to-read N]     pairs worth reading for semantic clashes
     pr-toolbox motion packets                      one reading packet per chosen pair
     pr-toolbox motion compare A B                  two findings files for the same commits must agree
+    pr-toolbox motion check-page [PAGE]            open the page in a headless browser and check what a reader meets
 """
 
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import shutil
@@ -142,9 +144,45 @@ def build(target: common.Target, args: argparse.Namespace) -> int:
     return 0
 
 
+PLAYWRIGHT_IMAGE = "mcr.microsoft.com/playwright/python:v1.63.0-noble"
+
+
+def check_page(argv: list[str]) -> int:
+    """Runs page_check.py on a built page: with this Python's Playwright if it has one, else in Playwright's image."""
+    parser = argparse.ArgumentParser(prog="pr-toolbox motion check-page",
+                                     description="Open a built page in a headless browser and check what a reader meets.")
+    parser.add_argument("page", nargs="?", help="the page (default: <cache>/work-in-motion.html)")
+    parser.add_argument("--cache", default=os.environ.get("WIM_CACHE", "~/.cache/pr-toolbox-motion"))
+    parser.add_argument("--shots", help="also save each view's first screen here")
+    parser.add_argument("--threads", type=int, default=3, help="CPUs for the Docker run (default: 3)")
+    args = parser.parse_args(argv)
+    page = Path(args.page or Path(args.cache) / "work-in-motion.html").expanduser().resolve()
+    if not page.is_file():
+        print(f"no page at {page}; build one first, or name it", file=sys.stderr)
+        return 2
+    shots = Path(args.shots).expanduser().resolve() if args.shots else None
+    script = HERE / "page_check.py"
+    if importlib.util.find_spec("playwright"):
+        return subprocess.run([sys.executable, str(script), str(page), *(["--shots", str(shots)] if shots else [])]).returncode
+    if shutil.which("docker"):
+        mounts = ["-v", f"{page}:/page/index.html:ro", "-v", f"{script}:/opt/check/page_check.py:ro"]
+        if shots:
+            shots.mkdir(parents=True, exist_ok=True)
+            mounts += ["-v", f"{shots}:/shots"]
+        inner = ("pip install -q --break-system-packages playwright==1.63.0 >/dev/null 2>&1; "
+                 "python3 /opt/check/page_check.py /page/index.html" + (" --shots /shots" if shots else ""))
+        return subprocess.run(["docker", "run", "--rm", f"--cpus={args.threads}", "--ipc=host", "-w", "/tmp", *mounts,
+                               PLAYWRIGHT_IMAGE, "bash", "-c", inner]).returncode
+    print("check-page needs Playwright for Python (pip install playwright, then playwright install chromium) or Docker",
+          file=sys.stderr)
+    return 2
+
+
 def main(argv: list[str]) -> int:
-    action = argv[0] if argv and argv[0] in {"build", "candidates", "packets", "compare"} else "build"
+    action = argv[0] if argv and argv[0] in {"build", "candidates", "packets", "compare", "check-page"} else "build"
     rest = argv[1:] if argv and argv[0] == action else argv
+    if action == "check-page":
+        return check_page(rest)
     if action == "compare":
         if len(rest) != 2:
             print("usage: pr-toolbox motion compare <findings a> <findings b>", file=sys.stderr)

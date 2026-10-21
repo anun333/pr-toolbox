@@ -81,6 +81,12 @@ section.band { padding-block: var(--s6); border-bottom: 1px solid var(--rule); d
 .glance-row .why { font-size: .8rem; color: var(--muted); line-height: 1.35; }
 .glance-note { font-size: .85rem; max-width: none; }
 .group { border-left: 3px solid var(--mech); padding-left: var(--s3); display: flex; flex-direction: column; gap: var(--s2); }
+.group-body { display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: var(--s4); align-items: start; }
+.gsvg { width: 100%; height: auto; max-width: 420px; display: block; }
+.gnode { cursor: pointer; } .gnode:focus { outline: none; } .gnode:focus circle, .gnode:hover circle { stroke: var(--accent); stroke-width: 3; }
+.legend { font-size: .82rem; color: var(--muted); display: flex; flex-wrap: wrap; gap: var(--s1) var(--s4); }
+.legend b { font-weight: 700; letter-spacing: -1px; }
+@media (max-width: 860px) { .group-body { grid-template-columns: minmax(0, 1fr); } }
 
 /* folded sections: one line each, opened on demand or by a link into them */
 details.fold { background: var(--sheet); border: 1px solid var(--rule); border-radius: 6px; }
@@ -185,7 +191,11 @@ table.triage td.t .by { color: var(--muted); font-size: 0.82rem; }
   .area > div + div { border-left: 0; border-top: 1px solid var(--rule); }
   .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
-@media (max-width: 460px) { .kv { grid-template-columns: minmax(0, 1fr); } .stats { grid-template-columns: minmax(0, 1fr); } .prline { grid-template-columns: minmax(0, 1fr); gap: 2px; } }
+@media (max-width: 460px) { .kv { grid-template-columns: minmax(0, 1fr); } .stats { grid-template-columns: minmax(0, 1fr); } .prline { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  /* phones: the counts come before the section links, small print and release dates give way */
+  .wrap { display: flex; flex-direction: column; padding-top: var(--s4); } .wrap > * { order: 4; }
+  .wrap > header.top { order: 1; padding-bottom: var(--s4); gap: var(--s3); } .wrap > #glance { order: 2; } .wrap > nav.toc { order: 3; }
+  .stamp .rel, .glance-row .why { display: none; } .glance-row { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (prefers-reduced-motion: no-preference) { details > *:not(summary) { animation: fade .18s ease-out; } @keyframes fade { from { opacity: .4 } to { opacity: 1 } } }
 </style>
 
@@ -295,7 +305,7 @@ const realShared = (p) => p.claim_shared.filter((m) => !STACKED.has(`${p.n}:${m}
 const stackShared = (p) => p.claim_shared.filter((m) => STACKED.has(`${p.n}:${m}`));
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const prLink = (n) => `<a class="mono" href="${GH}pull/${n}">#${n}</a>`;
+const prLink = (n) => { const p = MAP.prs[String(n)]; return `<a class="mono" href="${GH}pull/${n}"${p ? ` title="${esc(p.t)} · ${esc(p.by)}"` : ""}>#${n}</a>`; };
 const isLink = (n) => `<a class="mono" href="${GH}issues/${n}">#${n}</a>`;
 const linkNums = (s) => esc(s).replace(/#(\d{3,5})\b/g, (m, n) => `<a class="mono" href="${GH}issues/${n}">#${n}</a>`);
 const pr = (n) => MAP.prs[String(n)];
@@ -334,7 +344,7 @@ function renderStamp() {
   const s = MAP.stamp;
   const tags = s.tags.filter((t) => t.name !== BASE).map((t) => `${t.name} ${t.date}`).join(" · ");
   $("#stamp").innerHTML = `<dt>${esc(BASE)}</dt><dd><b>${esc(s.master)}</b></dd><dt>generated</dt><dd><b>${esc(s.generated)}</b></dd>
-    <dt>open PRs</dt><dd><b>${s.open_prs}</b> (${s.drafts} drafts)</dd><dt>releases</dt><dd>${esc(tags)}</dd>
+    <dt>open PRs</dt><dd><b>${s.open_prs}</b> (${s.drafts} drafts)</dd><dt class="rel">releases</dt><dd class="rel">${esc(tags)}</dd>
     <dt>built with</dt><dd><a href="https://github.com/anun333/pr-toolbox">pr-toolbox</a>${PF.tool_version ? ` ${esc(PF.tool_version)}` : ""} · <a href="#rebuild">rebuild it</a></dd>`;
 }
 
@@ -514,6 +524,37 @@ function rebuildPanel() {
     </ul></div>`;
 }
 
+/* a group drawn: circles for PRs, lines styled by why they are joined; an arrow points from a PR to the one it is built on */
+const STACK_DIR = new Set((MAP.duplicates?.stacked || []).map((x) => `${x.in}>${x.contained}`));
+const EDGE = { clash: ["var(--conflict)", "7 3", 3], break: ["var(--conflict)", "4 3", 2], "code conflict": ["var(--conflict)", "", 2],
+  stacked: ["var(--accent)", "", 2], "same issue": ["var(--mech)", "2 3", 2], "same name": ["var(--mech)", "2 3", 2] };
+const GROUP_LEGEND = `<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--accent)" /></marker></defs></svg>
+  <p class="legend"><span><b style="color:var(--conflict)">━━</b> code conflict</span><span><b style="color:var(--conflict)">╍╍</b> break</span><span><b style="color:var(--conflict)">▬ ▬</b> clash, read</span><span><b style="color:var(--accent)">━▶</b> built on</span><span><b style="color:var(--mech)">┈┈</b> same issue or name</span><span>circle: <b style="color:var(--ok)">green</b> nothing blocking, <b style="color:var(--conflict)">red ring</b> CI failing, dashed draft</span><span>select a circle for its card</span></p>`;
+function groupSvg(gr, i) {
+  const n = gr.prs.length, W = 420, H = n <= 2 ? 84 : n <= 4 ? 170 : 220, cx = W / 2, cy = n <= 2 ? 34 : H / 2 - 8;
+  const rx = n <= 2 ? 120 : Math.min(cx - 44, 70 + n * 11), ry = cy - 28, pos = {};
+  gr.prs.forEach((m, k) => { const a = n <= 2 ? Math.PI * (1 - k) : -Math.PI / 2 + (2 * Math.PI * k) / n; pos[m] = [cx + rx * Math.cos(a), cy + (n <= 2 ? 0 : ry * Math.sin(a))]; });
+  const edges = gr.links.map((l) => {
+    const kind = KIND_ORDER.find((k) => l.kinds.includes(k)) || "code conflict", [color, dash, w] = EDGE[kind];
+    let [x1, y1] = pos[l.a], [x2, y2] = pos[l.b], marker = "";
+    if (kind === "stacked") {
+      const top = STACK_DIR.has(`${l.a}>${l.b}`) ? l.a : l.b, base = top === l.a ? l.b : l.a;
+      [x1, y1] = pos[top]; [x2, y2] = pos[base];
+      const dx = x2 - x1, dy = y2 - y1, d = Math.hypot(dx, dy) || 1;
+      x2 -= (dx / d) * 18; y2 -= (dy / d) * 18; marker = ' marker-end="url(#arrow)"';
+    }
+    return `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="${color}" stroke-width="${w}"${dash ? ` stroke-dasharray="${dash}"` : ""}${marker}><title>#${l.a} and #${l.b}: ${esc(l.kinds.join(", "))}</title></line>`;
+  }).join("");
+  const nodes = gr.prs.map((m) => {
+    const p = pr(m) || {}, [x, y] = pos[m];
+    const failing = p.ci === "FAILURE" || p.ci === "ERROR";
+    return `<g class="gnode" data-n="${m}" tabindex="0" role="button" aria-label="#${m} ${esc(p.t || "")}, open its card"><title>#${m} ${esc(p.t || "")} · ${esc(p.by || "")}</title>
+      <circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="13" fill="${p.shortlist ? "var(--ok-soft)" : "var(--sheet)"}" stroke="${failing ? "var(--conflict)" : p.shortlist ? "var(--ok)" : "var(--muted)"}" stroke-width="2"${p.draft ? ' stroke-dasharray="3 2"' : ""} />
+      <text x="${x.toFixed(1)}" y="${(y + 27).toFixed(1)}" text-anchor="middle" font-size="11" font-family="JetBrains Mono, monospace" fill="var(--ink)" stroke="var(--paper)" stroke-width="4" paint-order="stroke">#${m}</text></g>`;
+  }).join("");
+  return `<svg class="gsvg" viewBox="0 0 ${W} ${H}" role="group" aria-label="Group ${i + 1} drawn: ${n} PRs and the links between them">${edges}${nodes}</svg>`;
+}
+
 /* at a glance: open PRs, those that stand alone, the groups whose order needs deciding, the shortlist, clashes */
 const KIND_ORDER = ["clash", "break", "code conflict", "stacked", "same issue", "same name"];
 function renderGlance() {
@@ -534,8 +575,12 @@ function renderGlance() {
     const kinds = [...new Set(gr.links.flatMap((l) => l.kinds))].sort((a, b) => KIND_ORDER.indexOf(a) - KIND_ORDER.indexOf(b));
     const pairs = gr.links.map((l) => `${prLink(l.a)}–${prLink(l.b)} ${esc(l.kinds.join(", "))}`).join(" · ");
     return `<div class="group" id="group-${i + 1}"><p><b>Group ${i + 1}</b> · ${plural(gr.prs.length, "PR", "PRs")} · ${esc(kinds.join(", "))}</p>
-      <ul class="plain">${gr.prs.map((n) => prLine(n)).join("")}</ul><p class="muted" style="font-size:.85rem">${pairs}</p></div>`;
+      <div class="group-body">${groupSvg(gr, i)}<div><ul class="plain">${gr.prs.map((n) => prLine(n)).join("")}</ul><p class="muted" style="font-size:.85rem">${pairs}</p></div></div></div>`;
   }).join("");
+  if (MAP.groups?.length) $("#groups-body").insertAdjacentHTML("afterbegin", GROUP_LEGEND);
+  const openCard = (n) => { $("#q").value = n; lookup(n); $("#lookup").scrollIntoView({ behavior: "smooth", block: "start" }); };
+  $("#groups-body").addEventListener("click", (e) => { const g = e.target.closest(".gnode"); if (g) openCard(g.dataset.n); });
+  $("#groups-body").addEventListener("keydown", (e) => { const g = e.target.closest(".gnode"); if (g && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); openCard(g.dataset.n); } });
   $("#glance-row").addEventListener("click", (e) => {
     const b = e.target.closest("[data-glance]"); if (!b) return;
     const id = b.dataset.glance;
@@ -659,6 +704,11 @@ const versionCell = (p) => p.claim == null ? (p.no_bump ? '<span class="pill mec
 const dirLabel = (k) => MAP.direction_labels[k]?.label || k;
 const planCell = (p) => [...p.against.map((k) => `<span class="pill conflict">+ ${esc(dirLabel(k))}</span>`), ...p.toward.map((k) => `<span class="pill ok">− ${esc(dirLabel(k))}</span>`)].join(" ") || '<span class="muted">none</span>';
 const ontoCell = (p) => p.mass ? '<span class="pill mech">not tested</span>' : p.rebase ? '<span class="pill conflict">rebase</span>' : '<span class="pill ok">merges</span>';
+/* the triage table marks only what is out of the ordinary; a card keeps every state as a pill */
+const tCi = (s) => (s === "SUCCESS" ? '<span class="muted">passing</span>' : ciPill(s));
+const tReview = (p) => (!p.maint ? '<span class="muted">none yet</span>' : ["COMMENTED", "DISMISSED"].includes(p.maint) ? `<span class="muted">${p.maint === "COMMENTED" ? "commented" : "dismissed"}</span> <span class="by">${esc(p.maint_by)}</span>` : reviewPill(p));
+const tOnto = (p) => (!p.mass && !p.rebase ? '<span class="muted">merges</span>' : ontoCell(p));
+const tVersion = (p) => (p.claim != null && !p.claim_taken && !realShared(p).length ? `<span class="muted mono">${p.claim}</span>` : versionCell(p));
 
 function prCard(n, p) {
   const areas = p.streams.map((id) => { const s = MAP.streams.find((x) => x.id === id); return `<a href="#area-${esc(id)}">${esc(s.title)}</a>`; }).join(", ");
@@ -793,8 +843,8 @@ function drawTriage() {
   const head = `<thead><tr>${COLS.map(([k, label]) => { const on = tstate.sort === k;
     return `<th class="${["age", "conf", "breaks", "size", "tests"].includes(k) ? "n" : ""}" aria-sort="${on ? (tstate.dir === "asc" ? "ascending" : "descending") : "none"}"><button type="button" data-sort="${k}" title="Sort: ${esc(SORTS[k][2][SORTS[k][1] === "asc" ? 0 : 1])}; again to reverse">${esc(label)}<span class="sort${on ? " on" : ""}">${on ? (tstate.dir === "asc" ? "▲" : "▼") : "⇅"}</span></button></th>`; }).join("")}</tr></thead>`;
   const body = (tstate.all ? rows : rows.slice(0, TRIAGE_ROWS)).map(([n, p]) => `<tr data-n="${n}"><td>${prLink(n)}</td><td class="t">${esc(p.t)}${draft(n)}<div class="by">${esc(p.by)} · ${esc(p.updated)}</div></td>
-    <td class="n">${p.age}</td><td>${ciPill(p.ci)}</td><td>${reviewPill(p)}</td><td>${ontoCell(p)}</td>
-    <td class="n${codeConf(p) ? "" : " zero"}">${codeConf(p)}</td><td class="n${p.breaks ? "" : " zero"}">${p.breaks}</td><td>${planCell(p)}</td><td>${versionCell(p)}</td>
+    <td class="n">${p.age}</td><td>${tCi(p.ci)}</td><td>${tReview(p)}</td><td>${tOnto(p)}</td>
+    <td class="n${codeConf(p) ? "" : " zero"}">${codeConf(p)}</td><td class="n${p.breaks ? "" : " zero"}">${p.breaks}</td><td>${planCell(p)}</td><td>${tVersion(p)}</td>
     <td class="n">+${p.add ?? "?"} −${p.del ?? "?"}</td><td class="n${p.tests ? "" : " zero"}">${p.tests}</td></tr>`).join("");
   $("#ttable").innerHTML = head + `<tbody>${body || `<tr><td colspan="${COLS.length}" class="muted">No open PR meets every filter. Clear one to widen the list.</td></tr>`}</tbody>`;
   $("#tmore").innerHTML = rows.length > TRIAGE_ROWS ? `<button type="button" class="chipbtn" id="tall">${tstate.all ? `Show the first ${TRIAGE_ROWS}` : `Show all ${rows.length}`}</button>` : "";

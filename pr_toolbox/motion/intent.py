@@ -330,7 +330,7 @@ for n, m in meta.items():
            "conflicts": conf_with.get(n, []), "interacts": interacts,
            "breaks": sum(1 for i in interacts if BREAK.match(i["what"])),
            "streams": stream_of.get(n, []), "fixes": refs.get(n, {}).get("fixes", []),
-           "ci": e.get("ci"), "reviews": reviews, "maint": maint[-1]["state"] if maint else "",
+           "ci": e.get("ci"), "ci_failing": e.get("ci_failing") or [], "reviews": reviews, "maint": maint[-1]["state"] if maint else "",
            "maint_by": maint[-1]["by"] if maint else "",
            "dir": direction, "against": sorted(k for k, (a, r) in direction.items() if a > r),
            "toward": sorted(k for k, (a, r) in direction.items() if r > a),
@@ -380,7 +380,7 @@ data["path"] = {
 }
 data["maintainers"] = [{"login": k, "merged": v} for k, v in mergers.items() if k in MAINTAINERS]
 data["profile"] = {k: P.get(k) for k in ("title", "project", "github", "base_branch", "mechanical_note", "left_out_note", "method_notes", "symbols",
-                                          "mass_files", "skip_labels", "tool_version", "preset")}
+                                          "mass_files", "skip_labels", "tool_version", "preset", "ci_ignore")}
 data["profile"]["version_noun"] = (P.get("version_claims") or {}).get("noun", "version number").strip("`")
 data["profile"]["caps_noun"] = (P.get("exact_caps") or {}).get("noun", "lint cap")
 data["profile"]["caps_file"] = (P.get("exact_caps") or {}).get("file")

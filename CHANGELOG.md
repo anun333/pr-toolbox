@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.6 (2026-10-21)
+
+- **`motion` reads CI the way `health` does.** It reads each check on a PR's head commit:
+  - checks matching the profile's `health_ignore` are left out (Codecov by default; OpenEMR also leaves out its summary job);
+  - a cancelled run is not a failure.
+
+  Before, it took GitHub's overall rollup, which counts both. On OpenEMR that marked 28 PRs as failing CI when only a coverage report or a cancelled run was red, and left them out of "Nothing blocking".
+- **Cards name the failing checks:** "CI failing on the head commit: PHP 8.3 - nginx - mariadb 12.3.3 / api", not "CI failing".
+- **When GitHub lists more than 100 checks for a commit,** the page falls back to GitHub's rollup rather than judge on part of them.
+- **A test holds `motion` and `health` to the same reading.**
+
 ## 0.4.5 (2026-10-21)
 
 The `motion` page, checked in a browser at desktop and phone widths and in dark mode, with these fixes:

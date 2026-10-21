@@ -9,6 +9,7 @@ Writes <cache>/open-prs.txt, pr-meta.json, pr-bodies.json, pr-extra.json and iss
 as data; runs nothing from them.
 """
 import json
+import re
 import os
 import subprocess
 import sys
@@ -29,7 +30,40 @@ QUERY = """query($cursor: String) {
       closingIssuesReferences(first: 10) { nodes { number } }
       reviews(last: 30) { nodes { author { login } authorAssociation state submittedAt } }
       comments { totalCount }
-      commits(last: 1) { nodes { commit { oid statusCheckRollup { state } } } } } } } }""".replace("%OWNER%", P["owner"]).replace("%NAME%", P["name"])
+      commits(last: 1) { nodes { commit { oid statusCheckRollup { state contexts(first: 100) { totalCount nodes {
+        __typename ... on CheckRun { name conclusion status } ... on StatusContext { context state } } } } } } } } } } }""".replace("%OWNER%", P["owner"]).replace("%NAME%", P["name"])
+
+# CI is read the way pr-toolbox health reads it: checks the profile's health_ignore names are left out (Codecov by
+# default), and a cancelled run is not a failure. GitHub's own rollup state counts both, so a PR whose only red is a
+# coverage report would read as failing.
+CI_IGNORE = re.compile(P.get("ci_ignore") or r"^codecov/")
+FAILED = {"FAILURE", "TIMED_OUT", "STARTUP_FAILURE", "ACTION_REQUIRED", "ERROR"}
+PENDING = {"PENDING", "EXPECTED", "QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED"}
+
+
+def ci_state(rollup):
+    """The head commit's CI state and failing checks. Falls back to GitHub's rollup state when it lists more
+    checks than were fetched."""
+    if not rollup:
+        return None, []
+    contexts = rollup.get("contexts") or {}
+    nodes = contexts.get("nodes") or []
+    if contexts.get("totalCount", 0) > len(nodes):
+        return rollup.get("state"), []
+    failing, pending, counted = [], 0, 0
+    for ctx in nodes:
+        name = ctx.get("name") or ctx.get("context") or "?"
+        if CI_IGNORE.search(name):
+            continue
+        counted += 1
+        state = (ctx.get("conclusion") or ctx.get("state") or ctx.get("status") or "").upper()
+        if state in FAILED:
+            failing.append(name)
+        elif state != "CANCELLED" and (state in PENDING or (ctx.get("status") or "").upper() in PENDING):
+            pending += 1
+    if failing:
+        return "FAILURE", sorted(set(failing))
+    return ("PENDING" if pending else "SUCCESS" if counted else rollup.get("state")), []
 
 
 def run(*args, check=True):
@@ -64,8 +98,9 @@ for p in prs:
         "closing": [n["number"] for n in p["closingIssuesReferences"]["nodes"]],
         "reviews": [{"by": (r.get("author") or {}).get("login") or "ghost", "role": r["authorAssociation"], "state": r["state"],
                      "at": (r["submittedAt"] or "")[:10]} for r in p["reviews"]["nodes"]],
-        "ci": ((commit.get("statusCheckRollup") or {}).get("state")) if commit.get("oid") == p["headRefOid"] else None,
     }
+    on_head = commit.get("oid") == p["headRefOid"]
+    extra[p["number"]]["ci"], extra[p["number"]]["ci_failing"] = ci_state(commit.get("statusCheckRollup")) if on_head else (None, [])
 (C / "pr-meta.json").write_text(json.dumps(meta))
 (C / "pr-bodies.json").write_text(json.dumps(bodies))
 (C / "pr-extra.json").write_text(json.dumps(extra))

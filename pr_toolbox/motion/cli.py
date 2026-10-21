@@ -89,7 +89,8 @@ def resolve_profile(target: common.Target, args: argparse.Namespace) -> dict:
         motion["mechanical"] = "^(" + "|".join(_glob_re(g) for g in globs) + ")$" if globs else "$^"
     return {"github": target.github, "owner": owner, "name": name, "remote": target.remote,
             "base_branch": target.base_branch, "version_claims": vc, "exact_caps": caps,
-            "tool_version": __version__, "preset": getattr(args, "preset", None), **motion}
+            "tool_version": __version__, "preset": getattr(args, "preset", None),
+            "ci_ignore": target.config.get("health_ignore") or r"^codecov/", **motion}
 
 
 def _glob_re(glob: str) -> str:

@@ -328,6 +328,46 @@ def _plain_strings_with_templates(js: str) -> list[str]:
     return found
 
 
+class CiState(unittest.TestCase):
+    """motion and health must read CI the same way: Codecov and the summary job left out, cancelled runs not failures."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        import ast
+        tree = ast.parse((MOTION / "fetch.py").read_text())
+        keep = [n for n in tree.body if (isinstance(n, ast.FunctionDef) and n.name == "ci_state")
+                or (isinstance(n, ast.Assign) and any(getattr(t, "id", "") in {"FAILED", "PENDING"} for t in n.targets))]
+        cls.ns = {"re": re}
+        exec(compile(ast.Module(body=keep, type_ignores=[]), "fetch.py", "exec"), cls.ns)
+
+    def read(self, ignore: str, *checks, total=None):
+        nodes = [{"__typename": "CheckRun", "name": n, "conclusion": c if c not in {"IN_PROGRESS"} else None,
+                  "status": "IN_PROGRESS" if c == "IN_PROGRESS" else "COMPLETED"} for n, c in checks]
+        self.ns["CI_IGNORE"] = re.compile(ignore)
+        rollup = {"state": "FAILURE", "contexts": {"totalCount": total or len(nodes), "nodes": nodes}}
+        return self.ns["ci_state"](rollup)
+
+    def test_codecov_and_the_summary_job_are_left_out(self) -> None:
+        ignore = "^(codecov/.*|All Checks Passed)$"
+        self.assertEqual(("SUCCESS", []), self.read(ignore, ("codecov/project", "FAILURE"), ("All Checks Passed", "FAILURE"), ("phpstan", "SUCCESS")))
+        self.assertEqual(("FAILURE", ["api"]), self.read(ignore, ("api", "FAILURE"), ("PR Title", "CANCELLED"), ("All Checks Passed", "FAILURE")))
+        self.assertEqual(("PENDING", []), self.read(ignore, ("api", "IN_PROGRESS"), ("phpstan", "SUCCESS")))
+        self.assertEqual(("FAILURE", []), self.read(ignore, ("api", "SUCCESS"), total=120), "more checks than fetched: GitHub's rollup")
+
+    def test_motion_agrees_with_health(self) -> None:
+        from pr_toolbox import pr_health
+        ignore = "^(codecov/.*|All Checks Passed)$"
+        cases = [[("codecov/patch", "FAILURE"), ("phpstan", "SUCCESS")], [("phpstan", "FAILURE"), ("e2e", "CANCELLED")],
+                 [("e2e", "IN_PROGRESS")], [("All Checks Passed", "FAILURE"), ("lint", "TIMED_OUT")]]
+        words = {"SUCCESS": "passing", "FAILURE": "failing", "PENDING": "pending"}
+        for checks in cases:
+            state, failing = self.read(ignore, *checks)
+            node = {"title": "t", "url": "u", "isDraft": False, "headRefOid": "h", "commits": {"nodes": [{"commit": {"statusCheckRollup": {
+                "contexts": {"nodes": [{"name": n, "conclusion": None if c == "IN_PROGRESS" else c, "status": "IN_PROGRESS" if c == "IN_PROGRESS" else "COMPLETED"} for n, c in checks]}}}}]}}
+            health = pr_health.summarize(node, "me", re.compile(ignore))
+            self.assertEqual((health["ci"], health["failing"]), (words[state], failing), checks)
+
+
 class Profiles(unittest.TestCase):
     def test_openemr_preset_carries_motion(self) -> None:
         from pr_toolbox import common

@@ -428,6 +428,7 @@ function renderMethod() {
     <li>Every open PR's head was fetched and merged onto ${esc(BASE)} ${esc(MAP.stamp.master)} in memory with <code>git merge-tree --write-tree</code>; each pair that shares a file was merged on top of the first. A PR that no longer merges onto master was compared branch to branch, leaving out the files it conflicts on with master.</li>
     ${PF.symbols === "php" ? `<li>PHP files were read by PHP's own tokenizer for classes, methods and signatures. Signature breaks compare the new parent signature with each override in another PR, or on ${esc(BASE)} in a file the PR doesn't update.</li>` : `<li>No symbol reader for this project's language, so the checks for signatures, removed names and same methods were skipped.</li>`}
     <li>Names (routes, tables, columns, lists, settings, menu ids, events) were read from each PR's added lines.</li>
+    <li>CI is each PR's head commit's checks${PF.ci_ignore ? `, leaving out those matching <code>${esc(PF.ci_ignore)}</code>` : ""}; a cancelled run is not a failure.</li>
     <li>Release counts were taken from each tag's tree. Plan issues, labels, CI states, reviews and the issues each PR closes come from GitHub on the build date. A maintainer review means one from someone who merged a PR in the past year (${MAP.maintainers.map((m) => `${esc(m.login)} ${m.merged}`).join(", ")}) or a member of the ${esc(PF.project || "project")} organisation, other than the PR's author; automated reviewers are counted apart.</li>
     ${Object.keys(MAP.direction_labels || {}).length ? `<li>"Fit with the plan" counts, in each PR's added and removed lines (tests and baselines aside), the patterns the plan retires: ${Object.values(MAP.direction_labels).map((d) => esc(d.label)).join(", ")}.</li>` : ""}
     <li>The path forward cuts each plan's remaining work the way the plan says: folders for a plan worked folder by folder, unticked items for a tracker issue (reach counted as the files that call what each item defines, or include it by name), and plan issues as single items. An item is in flight when an open PR cites its issue; a file is busy when an open PR changes it.</li>
@@ -555,7 +556,7 @@ function prCard(n, p) {
   <p class="muted">${esc(p.by)}${p.role ? ` (${esc(p.role.toLowerCase().replace("_", " "))})` : ""} · opened ${esc(p.created)}, ${p.age} days ago · updated ${esc(p.updated)}${p.fixes.length ? ` · fixes ${p.fixes.map(isLink).join(", ")}` : ""}${areas ? ` · ${areas}` : ""}</p>
   <div class="card">
     <div class="panel"><h4>Readiness</h4><ul class="plain">
-      ${li(`${ciPill(p.ci)} on the head commit`)}
+      ${li(`${ciPill(p.ci)} on the head commit${(p.ci_failing || []).length ? `: <span class="muted">${p.ci_failing.map(esc).join(", ")}</span>` : ""}`)}
       ${li(`${reviewPill(p)}${others.length ? ` <span class="muted">· also ${others.map((r) => `${esc(r.by)} ${esc(r.state.toLowerCase().replace("_", " "))}`).join(", ")}</span>` : ""}${bots ? ` <span class="muted">· ${bots} automated</span>` : ""}`)}
       ${p.by_maint ? li('<span class="pill info">opened by a maintainer</span>') : ""}
       ${li(`<span class="mono">+${p.add ?? "?"} −${p.del ?? "?"}</span> in ${p.files} files${p.mass ? ' <span class="pill mech">over 150</span>' : ""}`)}

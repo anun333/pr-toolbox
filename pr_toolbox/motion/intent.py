@@ -14,7 +14,7 @@ import re
 import subprocess
 import sys
 from collections import Counter, defaultdict
-from datetime import date
+from datetime import date, datetime, timedelta
 from html import escape as html_escape
 from pathlib import Path
 
@@ -221,7 +221,7 @@ for s in streams["streams"]:
             continue
         counts.append({"label": msr["label"], "by_release": [{"tag": tag_info[t]["name"], "value": measure(msr, t)} for t in TAGS]})
     out_streams.append({**{k: s[k] for k in ("id", "title", "summary", "target", "before") if k in s},
-                        **{k: s[k] for k in ("keys_leaving", "removals") if k in s},
+                        **{k: s[k] for k in ("keys_leaving", "keys_heading", "removals") if k in s},
                         "plan": plan, "inflight": sorted(inflight, key=lambda x: -x["n"]), "measures": counts})
 cache_f.write_text(json.dumps(cache))
 
@@ -472,6 +472,83 @@ for gi, g in enumerate(data["groups"], 1):
 data["glance"] = {"open": len(prs_out), "mass": len(mass), "groups": len(groups), "in_groups": sum(len(g) for g in groups),
                   "alone": sum(1 for n, p in prs_out.items() if not p.get("group") and n not in mass),
                   "clashes": sum(1 for x in (data.get("semantic") or {}).get("items", []) if x["verdict"] == "clash")}
+
+# --- since the last build: each build keeps a snapshot of every PR's standing, and the page compares this one with
+# the newest snapshot at least WIM_SINCE_HOURS old (default 12), so rebuilding twice in a day still reads as "since
+# yesterday". "Nothing blocking" is decided here as on the page: the browser check holds the two to the same answer.
+STACKED = {(x["in"], x["contained"]) for x in findings["stacked"]} | {(x["contained"], x["in"]) for x in findings["stacked"]}
+
+
+def blockers(n, p):
+    """Why a PR is not in "Nothing blocking"; empty when it is."""
+    out = []
+    if p["draft"]:
+        out.append("draft")
+    if p["mass"]:
+        out.append("too large to compare")
+    elif p["rebase"]:
+        out.append("needs a rebase")
+    if p["ci"] != "SUCCESS":
+        out.append({"FAILURE": "CI failing", "ERROR": "CI error", "PENDING": "CI pending", "EXPECTED": "CI waiting"}.get(p["ci"], "CI not run"))
+    if p["maint"] == "CHANGES_REQUESTED":
+        out.append("changes requested")
+    if any(c["kind"] == "code" for c in p["conflicts"]):
+        out.append("code conflict")
+    if p["breaks"]:
+        out.append("breaks another PR")
+    if p["against"]:
+        out.append("adds what the plan retires")
+    if p["claim_taken"] or p["no_bump"] or any((n, m) not in STACKED for m in p["claim_shared"]):
+        out.append("version number")
+    if p["caps_alone"] or p["caps_with"]:
+        out.append("caps")
+    return out
+
+
+for n, p in prs_out.items():
+    p["shortlist"] = not blockers(n, p)
+code_pairs = {tuple(sorted((n, c["n"]))) for n, p in prs_out.items() for c in p["conflicts"] if c["kind"] == "code"}
+snapshot = {"at": datetime.now().isoformat(timespec="seconds"), "master": master_sha,
+            "prs": {n: {"t": p["t"], "by": p["by"], "draft": p["draft"], "ci": p["ci"], "rebase": p["rebase"], "maint": p["maint"],
+                        "maint_by": p["maint_by"], "shortlist": p["shortlist"], "head": p["head"]} for n, p in prs_out.items()},
+            "code_pairs": sorted(code_pairs)}
+HIST = G / "history"
+HIST.mkdir(exist_ok=True)
+older = sorted(HIST.glob("*.json"))
+cutoff = datetime.now() - timedelta(hours=float(os.environ.get("WIM_SINCE_HOURS", "12")))
+# the newest snapshot old enough; before a day of history exists, the oldest one (the page states its time)
+base_f = next((f for f in reversed(older) if datetime.fromisoformat(json.loads(f.read_text())["at"]) <= cutoff), older[0] if older else None)
+data["since"] = None
+if base_f:
+    before = json.loads(base_f.read_text())
+    old = {int(k): v for k, v in before["prs"].items()}
+    gone = sorted(set(old) - set(prs_out))
+    fates = {}
+    for n in gone[:40]:
+        if os.environ.get("WIM_OFFLINE"):
+            break
+        r = subprocess.run(["gh", "api", f"repos/{P['github']}/pulls/{n}", "--jq", "{merged: .merged, by: (.merged_by.login // \"\")}"],
+                           capture_output=True, text=True)
+        if r.returncode == 0 and r.stdout.strip():
+            fates[n] = json.loads(r.stdout)
+    both = set(old) & set(prs_out)
+    old_pairs = {tuple(x) for x in before.get("code_pairs", [])}
+    data["since"] = {
+        "at": before["at"], "master": before["master"][:10],
+        "merged": [{"n": n, "t": old[n]["t"], "by": old[n]["by"], "merged_by": fates[n]["by"]} for n in gone if fates.get(n, {}).get("merged")],
+        "closed": [{"n": n, "t": old[n]["t"], "by": old[n]["by"]} for n in gone if n in fates and not fates[n]["merged"]],
+        "gone": [{"n": n, "t": old[n]["t"], "by": old[n]["by"]} for n in gone if n not in fates],
+        "new": sorted(n for n in prs_out if n not in old),
+        "entered": sorted(n for n in prs_out if prs_out[n]["shortlist"] and not old.get(n, {}).get("shortlist")),
+        "left": [{"n": n, "why": blockers(n, prs_out[n])} for n in sorted(both) if old[n]["shortlist"] and not prs_out[n]["shortlist"]],
+        "rebase": sorted(n for n in both if prs_out[n]["rebase"] and not old[n]["rebase"]),
+        "conflicts": [list(x) for x in sorted(code_pairs - old_pairs) if x[0] in old and x[1] in old],
+        "reviews": [{"n": n, "state": prs_out[n]["maint"], "by": prs_out[n]["maint_by"]} for n in sorted(both)
+                    if prs_out[n]["maint"] in ("APPROVED", "CHANGES_REQUESTED") and prs_out[n]["maint"] != old[n]["maint"]],
+    }
+(HIST / f"{datetime.now():%Y%m%dT%H%M%S}.json").write_text(json.dumps(snapshot))
+for f in sorted(HIST.glob("*.json"))[:-30]:  # keep the newest 30
+    f.unlink()
 
 (W / "map.json").write_text(json.dumps(data))
 fill = {"%%TITLE%%": P["title"], "%%GITHUB%%": P["github"], "%%PROJECT%%": P["project"], "%%BASE%%": P["base_branch"],

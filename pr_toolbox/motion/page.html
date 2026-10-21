@@ -82,6 +82,22 @@ section.band { padding-block: var(--s6); border-bottom: 1px solid var(--rule); d
 .glance-note { font-size: .85rem; max-width: none; }
 .group { border-left: 3px solid var(--mech); padding-left: var(--s3); display: flex; flex-direction: column; gap: var(--s2); }
 
+/* folded sections: one line each, opened on demand or by a link into them */
+details.fold { background: var(--sheet); border: 1px solid var(--rule); border-radius: 6px; }
+details.fold > summary { list-style: none; cursor: pointer; padding: var(--s4) var(--s5); display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--s1) var(--s4); align-items: baseline; color: var(--ink); font-size: 1rem; margin: 0; }
+details.fold > summary::-webkit-details-marker { display: none; }
+details.fold > summary h3 { font-size: 1.15rem; }
+details.fold > summary h3::before { content: "▸ "; color: var(--accent); }
+details.fold[open] > summary h3::before { content: "▾ "; }
+details.fold > summary .facts { font: .82rem/1.4 var(--f-mono); color: var(--muted); text-align: right; }
+details.fold > summary .sum { grid-column: 1 / -1; color: var(--muted); font-size: .92rem; }
+details.fold[open] > summary { border-bottom: 1px solid var(--rule); }
+details.fold > .area { border: 0; border-radius: 0 0 6px 6px; }
+.fold-in { padding: var(--s5); display: flex; flex-direction: column; gap: var(--s4); }
+.since { background: var(--sheet); border: 1px solid var(--rule); border-radius: 6px; padding: var(--s3) var(--s4); font-size: .92rem; }
+.since ul.plain { margin-top: var(--s2); }
+@media (max-width: 860px) { details.fold > summary { grid-template-columns: minmax(0, 1fr); } details.fold > summary .facts { text-align: left; } }
+
 /* lookup */
 .lookup { background: var(--sheet); border: 1px solid var(--rule); border-radius: 6px; padding: var(--s5); display: flex; flex-direction: column; gap: var(--s4); }
 .lookup form { display: flex; gap: var(--s2); flex-wrap: wrap; }
@@ -192,6 +208,7 @@ table.triage td.t .by { color: var(--muted); font-size: 0.82rem; }
     <div class="glance-row" id="glance-row"></div>
     <p class="muted glance-note" id="glance-note"></p>
     <details id="groups-list"><summary id="groups-summary"></summary><div class="stack" id="groups-body"></div></details>
+    <div class="since" id="since"></div>
   </section>
 
   <section class="band" id="lookup">
@@ -221,6 +238,7 @@ table.triage td.t .by { color: var(--muted); font-size: 0.82rem; }
       <div class="filters" id="filters" role="group" aria-label="Filters"></div>
       <div class="row"><label for="tq" class="eyebrow">Title, author or number</label><input id="tq" class="tq" spellcheck="false" placeholder="fhir, vitals, tsimonq2, 14443"><span class="muted" id="tcount"></span></div>
       <div class="scroll"><table class="triage" id="ttable"></table></div>
+      <div class="row" id="tmore"></div>
     </div>
   </section>
 
@@ -339,19 +357,25 @@ function renderAreas() {
   $("#area-list").innerHTML = MAP.streams.map((s) => {
     const target = s.target.map(quoteBlock).join("");
     const before = s.before.length ? `<div class="stack" style="gap:var(--s2)"><span class="eyebrow">Before you build here</span><ol class="advice">${s.before.map((b) => `<li>${linkNums(b)}</li>`).join("")}</ol></div>` : "";
-    const keys = s.keys_leaving ? `<div class="stack" style="gap:var(--s2)"><span class="eyebrow">Keys planned to leave OEGlobalsBag</span><div class="scroll"><table><thead><tr><th>Issue</th><th>What</th><th>Keys, including</th></tr></thead><tbody>${s.keys_leaving.map((k) => `<tr><td>${isLink(k.issue)}</td><td>${esc(k.what)}${k.note ? `<div class="muted" style="font-size:.82rem">${esc(k.note)}</div>` : ""}</td><td><div class="keys">${k.keys.map((x) => `<code>${esc(x)}</code>`).join("")}</div></td></tr>`).join("")}</tbody></table></div></div>` : "";
+    const keys = s.keys_leaving ? `<div class="stack" style="gap:var(--s2)"><span class="eyebrow">${esc(s.keys_heading || "Names planned to move")}</span><div class="scroll"><table><thead><tr><th>Issue</th><th>What</th><th>Keys, including</th></tr></thead><tbody>${s.keys_leaving.map((k) => `<tr><td>${isLink(k.issue)}</td><td>${esc(k.what)}${k.note ? `<div class="muted" style="font-size:.82rem">${esc(k.note)}</div>` : ""}</td><td><div class="keys">${k.keys.map((x) => `<code>${esc(x)}</code>`).join("")}</div></td></tr>`).join("")}</tbody></table></div></div>` : "";
     const removals = s.removals ? `<ul class="plain">${s.removals.map((r) => `<li><b>${esc(r.what)}</b> · ${isLink(r.issue)}${r.pr ? ` · ${prLink(r.pr)}` : ""}${r.done ? ` <span class="pill ok">done</span> <span class="muted">${esc(r.done)}</span>` : r.note ? ` <span class="muted">${esc(r.note)}</span>` : ""}</li>`).join("")}</ul>` : "";
     const plan = s.plan.length ? more(s.plan, 6, (i) => `<li class="prline"><span class="num">${isLink(i.n)}</span><span>${esc(i.title)} <span class="by">${esc(i.by)}${i.state === "closed" ? " · closed" : ""}${i.pr ? " · PR" : ""}</span></span></li>`) : `<p class="muted">No plan issue.</p>`;
     const inflight = s.inflight.length ? more(s.inflight, 6, (x) => prLine(x.n, `<div class="muted" style="font-size:.78rem">matched by: ${esc(x.why.join(", "))}</div>`)) : `<p class="muted">No open PR found here.</p>`;
     const measures = s.measures.map((m) => m.checklist
       ? `<div class="measure"><span class="eyebrow">${esc(m.label)}</span><p><b class="mono">${m.checklist.done}</b> of ${m.checklist.total}, as the issue reads today</p></div>`
       : `<div class="measure"><span class="eyebrow">${esc(m.label)}</span>${sparkline(m)}</div>`).join("");
-    return `<article class="area" id="area-${esc(s.id)}">
-      <div class="head"><h3>${esc(s.title)}</h3><p class="muted">${esc(s.summary)}</p></div>
+    const first = s.measures[0];
+    const trend = !first ? "" : first.checklist ? ` · ${first.checklist.done} of ${first.checklist.total} ticked`
+      : (() => { const v = first.by_release, a = v[0].value, z = v[v.length - 1].value, d = z - a;
+          return ` · ${z.toLocaleString()} ${esc(first.label)}${d ? ` (${d < 0 ? "−" : "+"}${Math.abs(d).toLocaleString()} since ${esc(v[0].tag)})` : ""}`; })();
+    return `<details class="fold" id="area-${esc(s.id)}"><summary><h3>${esc(s.title)}</h3>
+      <span class="facts">${plural(s.inflight.length, "open PR", "open PRs")} · ${plural(s.plan.length, "plan issue", "plan issues")}${trend}</span>
+      <span class="sum">${esc(s.summary)}</span></summary>
+      <article class="area">
       <div>${target}${before}${keys}${removals}</div>
       <div><div class="stack" style="gap:var(--s2)"><span class="eyebrow">Plan</span>${plan}</div>
         <div class="stack" style="gap:var(--s2)"><span class="eyebrow">Open PRs here · ${s.inflight.length}</span>${inflight}</div>${measures}</div>
-    </article>`;
+    </article></details>`;
   }).join("");
 }
 
@@ -522,8 +546,40 @@ function renderGlance() {
     drawTriage();
     $("#triage").scrollIntoView({ behavior: "smooth", block: "start" });
   });
-  // a link to a group opens the list it sits in
-  document.addEventListener("click", (e) => { if (e.target.closest('a[href^="#group-"]')) $("#groups-list").open = true; });
+}
+
+/* since the last build: what changed, for a reader who comes back */
+function renderSince() {
+  const s = MAP.since, el = $("#since");
+  if (!s) { el.innerHTML = '<p class="muted">No earlier build to compare with yet. The next build lists what changed since this one.</p>'; return; }
+  const gone = (x, how) => `<li class="prline"><span class="num">${prLink(x.n)}</span><span>${esc(x.t)} <span class="by">${esc(x.by)}${how ? ` · ${how}` : ""}</span></span></li>`;
+  const parts = [
+    [s.merged, "merged", (x) => gone(x, x.merged_by ? `merged by ${esc(x.merged_by)}` : "merged")],
+    [s.closed, "closed without merging", (x) => gone(x, "closed")],
+    [s.gone, "no longer open", (x) => gone(x, "")],
+    [s.new, "new", (n) => prLine(n)],
+    [s.entered, "now nothing blocking", (n) => prLine(n)],
+    [s.left, "no longer nothing blocking", (x) => prLine(x.n, ` <span class="muted">· ${esc(x.why.join(", "))}</span>`)],
+    [s.conflicts, "new code conflicts", ([a, b]) => `<li>${prLink(a)} and ${prLink(b)} <span class="muted">${esc(pr(a)?.t || "")} · ${esc(pr(b)?.t || "")}</span></li>`],
+    [s.rebase, "newly need a rebase", (n) => prLine(n)],
+    [s.reviews, "maintainer reviews", (x) => prLine(x.n, ` <span class="muted">· ${x.state === "APPROVED" ? "approved" : "changes requested"} by ${esc(x.by)}</span>`)],
+  ].filter(([xs]) => xs.length);
+  const when = s.at.replace("T", " ").slice(0, 16);
+  const line = parts.map(([xs, what]) => `${xs.length} ${what}`).join(" · ") || "nothing changed";
+  el.innerHTML = `<p><b>Since ${esc(when)}</b> <span class="muted">(${esc(BASE)} ${esc(s.master)} then, ${esc(MAP.stamp.master)} now)</span>: ${line}.</p>
+    ${parts.length ? `<details><summary>What changed</summary><div class="stack">${parts.map(([xs, what, render]) => `<div><span class="eyebrow">${esc(what)} · ${xs.length}</span>${more(xs, 8, render)}</div>`).join("")}</div></details>` : ""}`;
+}
+
+/* a link into a folded section opens it, as does arriving at one from another page */
+function wireFolds() {
+  const open = (hash) => {
+    const el = hash && hash.length > 1 && document.getElementById(decodeURIComponent(hash.slice(1)));
+    for (let d = el && (el.tagName === "DETAILS" ? el : el.closest("details")); d; d = d.parentElement?.closest("details")) d.open = true;
+  };
+  document.addEventListener("click", (e) => { const a = e.target.closest('a[href^="#"]'); if (a) open(a.getAttribute("href")); });
+  window.addEventListener("hashchange", () => open(location.hash));
+  open(location.hash);
+  $("#tmore").addEventListener("click", (e) => { if (e.target.closest("#tall")) { tstate.all = !tstate.all; drawTriage(); } });
 }
 
 /* the path forward: decide, land, rebase, then pick up new work in each plan's own order */
@@ -564,10 +620,13 @@ function renderPath() {
   const v = MAP.merge.version;
   const renumber = [...new Set([...v.taken, ...Object.values(v.shared).flat().filter((n) => realShared(MAP.prs[n] || { n, claim_shared: [] }).length)])];
   const caps = Object.keys(MAP.merge.caps_alone);
-  const areaTodos = MAP.streams.filter((s) => P.todos[s.id]).map((s) => `<article class="panel" id="next-${esc(s.id)}"><h3><a href="#area-${esc(s.id)}">${esc(s.title)}</a></h3>
+  const todoFacts = (ts) => ts.map((t) => t.kind === "batches" ? plural(t.batches.length, "folder", "folders") + " in the plan's order"
+      : t.kind === "checklist" ? `${t.ticked} of ${t.total} ticked` : null).filter(Boolean)
+    .concat(ts.some((t) => t.kind === "item") ? [`${plural(ts.filter((t) => t.kind === "item").length, "plan issue", "plan issues")}, ${ts.filter((t) => t.kind === "item" && t.state === "in flight").length} in flight`] : []).join(" · ");
+  const areaTodos = MAP.streams.filter((s) => P.todos[s.id]).map((s) => `<details class="fold" id="next-${esc(s.id)}"><summary><h3>${esc(s.title)}</h3><span class="facts">${esc(todoFacts(P.todos[s.id]))}</span></summary><div class="fold-in"><p><a href="#area-${esc(s.id)}">The area's plan</a></p>
       ${P.todos[s.id].filter((t) => t.kind === "batches").map(todoBatches).join("")}
       ${P.todos[s.id].filter((t) => t.kind === "checklist").map(todoChecklist).join("")}
-      ${P.todos[s.id].some((t) => t.kind === "item") ? `<ul class="plain">${P.todos[s.id].filter((t) => t.kind === "item").map(todoItem).join("")}</ul>` : ""}</article>`).join("");
+      ${P.todos[s.id].some((t) => t.kind === "item") ? `<ul class="plain">${P.todos[s.id].filter((t) => t.kind === "item").map(todoItem).join("")}</ul>` : ""}</div></details>`).join("");
   $("#path-body").innerHTML = `
     <div class="grid2">
       <div class="panel"><span class="eyebrow">1 · Maintainers</span><h3>Decide between overlapping PRs</h3><p class="muted">Pick one of each group, or combine them, before anyone reviews twice.</p><ul class="plain">${decide || "<li>None.</li>"}</ul></div>
@@ -696,7 +755,8 @@ const SORTS = {
   size: [(p) => (p.add || 0) + (p.del || 0), "desc", ["smallest first", "largest first"]],
   tests: [(p) => p.tests, "desc", ["fewest test files first", "most test files first"]],
 };
-const tstate = { on: new Set(), sort: "updated", dir: "desc", q: "" };
+const tstate = { on: new Set(), sort: "updated", dir: "desc", q: "", all: false };
+const TRIAGE_ROWS = 25;
 const setSort = (key, dir) => { tstate.sort = SORTS[key] ? key : "updated"; tstate.dir = dir || SORTS[tstate.sort][1]; };
 
 function renderTriage() {
@@ -705,7 +765,7 @@ function renderTriage() {
   $("#presets").addEventListener("click", (e) => {
     const b = e.target.closest("[data-preset]"); if (!b) return;
     const [, ids, sort] = PRESETS[+b.dataset.preset];
-    tstate.on = new Set(ids); setSort(sort); drawTriage();
+    tstate.on = new Set(ids); tstate.all = false; setSort(sort); drawTriage();
   });
   $("#filters").addEventListener("click", (e) => {
     const b = e.target.closest("[data-f]"); if (!b) return;
@@ -732,11 +792,12 @@ function drawTriage() {
   $("#tcount").textContent = `${rows.length} of ${Object.keys(MAP.prs).length} open PRs · sorted ${says[tstate.dir === "asc" ? 0 : 1]}`;
   const head = `<thead><tr>${COLS.map(([k, label]) => { const on = tstate.sort === k;
     return `<th class="${["age", "conf", "breaks", "size", "tests"].includes(k) ? "n" : ""}" aria-sort="${on ? (tstate.dir === "asc" ? "ascending" : "descending") : "none"}"><button type="button" data-sort="${k}" title="Sort: ${esc(SORTS[k][2][SORTS[k][1] === "asc" ? 0 : 1])}; again to reverse">${esc(label)}<span class="sort${on ? " on" : ""}">${on ? (tstate.dir === "asc" ? "▲" : "▼") : "⇅"}</span></button></th>`; }).join("")}</tr></thead>`;
-  const body = rows.map(([n, p]) => `<tr data-n="${n}"><td>${prLink(n)}</td><td class="t">${esc(p.t)}${draft(n)}<div class="by">${esc(p.by)} · ${esc(p.updated)}</div></td>
+  const body = (tstate.all ? rows : rows.slice(0, TRIAGE_ROWS)).map(([n, p]) => `<tr data-n="${n}"><td>${prLink(n)}</td><td class="t">${esc(p.t)}${draft(n)}<div class="by">${esc(p.by)} · ${esc(p.updated)}</div></td>
     <td class="n">${p.age}</td><td>${ciPill(p.ci)}</td><td>${reviewPill(p)}</td><td>${ontoCell(p)}</td>
     <td class="n${codeConf(p) ? "" : " zero"}">${codeConf(p)}</td><td class="n${p.breaks ? "" : " zero"}">${p.breaks}</td><td>${planCell(p)}</td><td>${versionCell(p)}</td>
     <td class="n">+${p.add ?? "?"} −${p.del ?? "?"}</td><td class="n${p.tests ? "" : " zero"}">${p.tests}</td></tr>`).join("");
   $("#ttable").innerHTML = head + `<tbody>${body || `<tr><td colspan="${COLS.length}" class="muted">No open PR meets every filter. Clear one to widen the list.</td></tr>`}</tbody>`;
+  $("#tmore").innerHTML = rows.length > TRIAGE_ROWS ? `<button type="button" class="chipbtn" id="tall">${tstate.all ? `Show the first ${TRIAGE_ROWS}` : `Show all ${rows.length}`}</button>` : "";
 }
 
 /* lookup */
@@ -779,5 +840,5 @@ function wireLookup() {
   $("#q").value = ex[0]; lookup(ex[0]);
 }
 
-renderStamp(); renderStart(); renderAreas(); renderTwice(); renderMerge(); renderReleases(); renderMethod(); renderTriage(); renderPath(); renderGlance(); wireLookup();
+renderStamp(); renderStart(); renderAreas(); renderTwice(); renderMerge(); renderReleases(); renderMethod(); renderTriage(); renderPath(); renderGlance(); renderSince(); wireLookup(); wireFolds();
 </script>

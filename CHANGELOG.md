@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.4.9 (2026-10-21)
+
+- **Since the last build:** a panel under the summary strip lists what changed. It compares with the newest build at least 12 hours older (`WIM_SINCE_HOURS`), so rebuilding twice in a day still reads as "since yesterday"; until a day of history exists, it compares with the oldest build kept. It covers:
+  - PRs merged or closed (asking GitHub which, unless `WIM_OFFLINE` is set);
+  - new PRs;
+  - PRs that entered or left "Nothing blocking", with why;
+  - new code conflicts;
+  - PRs that newly need a rebase;
+  - maintainer approvals and change requests.
+
+  Each build saves a small snapshot in the cache's `history/` (the newest 30 are kept).
+- **Shorter page:** about 39 desktop screens down to 19 on OpenEMR.
+  - **Areas:** each area folds to one line with its open PRs, plan issues and latest count with its trend.
+  - **Path forward:** each area's remaining work folds the same way.
+  - **Triage:** shows 25 rows, then "Show all".
+  - **Links:** a link into a folded section opens it.
+- **"Nothing blocking" is also decided in Python,** for the "since" comparison. The browser check holds the page and the build to the same count.
+- **Profile text:** the heading over a stream's names planned to move comes from the profile (`keys_heading`), not the template. The template test now also checks for names from the OpenEMR profile.
+
 ## 0.4.8 (2026-10-21)
 
 - **Every triage column sorts.** Before, only 6 of the 12 did, in one direction, with no visible cue.

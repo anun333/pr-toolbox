@@ -195,7 +195,7 @@ class MotionFixture(unittest.TestCase):
         path.write_text(json.dumps(profile))
         return subprocess.run([sys.executable, "-I", str(MOTION / "intent.py"), str(self.repo), str(self.work), str(g),
                                str(MOTION / "page.html"), str(self.tmp / "page.html")],
-                              capture_output=True, text=True, env={**os.environ, "WIM_PROFILE": str(path)})
+                              capture_output=True, text=True, env={**os.environ, "WIM_PROFILE": str(path), "WIM_OFFLINE": "1"})
 
     def test_page_renders_with_a_checked_quote(self) -> None:
         r = self.page("New code goes in src/, and every change needs a test.")
@@ -218,6 +218,31 @@ class MotionFixture(unittest.TestCase):
         # 8 and 9 share only a version number: a renumber, not a decision, so both stand alone
         self.assertEqual({"open": 9, "alone": 2, "groups": 3, "in_groups": 7},
                          {k: data["glance"][k] for k in ("open", "alone", "groups", "in_groups")})
+
+    def test_since_compares_with_a_build_at_least_12_hours_old(self) -> None:
+        from datetime import datetime, timedelta
+        hist = self.tmp / "inputs" / "history"
+        shutil.rmtree(hist, ignore_errors=True)
+        hist.mkdir(parents=True)
+        def pr_state(**over):
+            return {"t": "PR", "by": "someone", "draft": False, "ci": "SUCCESS", "rebase": False, "maint": "", "maint_by": "",
+                    "shortlist": False, "head": "x", **over}
+        two_days = {"at": (datetime.now() - timedelta(days=2)).isoformat(timespec="seconds"), "master": "a" * 40, "code_pairs": [],
+                    "prs": {"1": pr_state(), "2": pr_state(), "8": pr_state(shortlist=True), "99": pr_state(t="Gone PR")}}
+        an_hour = {**two_days, "at": (datetime.now() - timedelta(hours=1)).isoformat(timespec="seconds"),
+                   "prs": {**two_days["prs"], "8": pr_state(shortlist=False)}}
+        (hist / "20261001T000000.json").write_text(json.dumps(two_days))
+        (hist / "20261002T000000.json").write_text(json.dumps(an_hour))
+        r = self.page("New code goes in src/, and every change needs a test.")
+        self.assertEqual(r.returncode, 0, r.stderr[-1500:])
+        since = json.loads((self.work / "map.json").read_text())["since"]
+        self.assertEqual(two_days["at"], since["at"], "the hour-old build is too recent to compare with")
+        self.assertEqual([99], [x["n"] for x in since["gone"]], "offline, a PR no longer open is neither merged nor closed")
+        self.assertIn(9, since["new"])
+        self.assertEqual([8], [x["n"] for x in since["left"]])
+        self.assertIn("version number", since["left"][0]["why"], "8 and 9 claim one version number")
+        self.assertIn([1, 2], since["conflicts"])
+        self.assertEqual(3, len(list(hist.glob("*.json"))), "this build adds its own snapshot")
 
     def test_a_drifted_quote_stops_the_page(self) -> None:
         r = self.page("New code goes in lib/, and every change needs a test.")
@@ -404,6 +429,8 @@ class Profiles(unittest.TestCase):
         self.assertIsNone(re.search(r"prLink\(\d+\)|isLink\(\d+\)|#1\d{4}\b", page))
         self.assertNotIn("OpenEMR", page)
         self.assertNotIn("ACL", page)
+        for name in ("OEGlobalsBag", "QueryUtils", "v_database", "AGENTS.md"):  # names from the OpenEMR profile
+            self.assertNotIn(name, page)
 
     def test_no_template_expression_in_a_plain_string(self) -> None:
         page = (MOTION / "page.html").read_text()

@@ -123,6 +123,7 @@
           "url": "https://github.com/openemr/openemr/issues/12736"
         }
       ],
+      "keys_heading": "Keys planned to leave OEGlobalsBag",
       "keys_leaving": [
         {
           "issue": 12737,

@@ -263,6 +263,8 @@ It writes one self-contained HTML page (`~/.cache/pr-toolbox-motion/work-in-moti
 - **The maintainers' plan per area,** quoted from their own documents and issues, each quote checked word for word against its source on every build: a quote that drifts stops the build.
 - **A path forward:** decide between overlapping PRs, review what nothing blocks, rebase where the fix is mechanical, then pick up new work in each plan's own order, on files no open PR changes.
 - **At a glance, on the first screen:** how many PRs stand alone (no code conflict, break, stack, duplicate or clash with another open PR, so their order doesn't matter), and how many groups of linked PRs need their order decided. Each count opens the list behind it. Overlaps only in mechanical files join no group, and PRs too large to compare never count as standing alone.
+- **Since the last build:** what changed since the newest build at least 12 hours older (`WIM_SINCE_HOURS`): PRs merged or closed, new PRs, PRs that entered or left "Nothing blocking" and why, new code conflicts, PRs that newly need a rebase, maintainer reviews. Each build keeps a small snapshot in the cache's `history/`.
+- **Folded sections:** each area, and each area's remaining work in the path forward, is one line until opened; a link into one opens it.
 - **A triage table** of every open PR with CI, maintainer review, conflicts, breaks, fit with the plan and size, filterable. Its "Nothing blocking" view is not a review: it says only that reviewing a PR won't be wasted on a rebase or a collision.
 - **Evidence on every claim:** each PR card names the commits it was computed on and the git commands that reproduce it.
 

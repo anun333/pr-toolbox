@@ -51,6 +51,7 @@ Maintainers will act on these definitions, so keep them exact and keep the page'
 - **Nothing blocking** requires all of these:
   - out of draft and merging onto the base;
   - CI passing, with checks read one by one: the profile's `health_ignore` names are left out and a cancelled run is not a failure;
+  - CI having run: with `ci_required` in the profile, a head without a matching check reads "CI not run". GitHub holds the workflows of a first-time contributor's fork PR until a maintainer approves them, and until then only app checks (DCO, CodeRabbit, auto-merge) are there;
   - no changes requested by a maintainer;
   - no code conflict, no break, nothing the plan retires;
   - version number and caps whole.

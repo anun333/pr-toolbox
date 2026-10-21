@@ -94,6 +94,7 @@
   "motion": {
     "title": "OpenEMR Work in Motion",
     "project": "OpenEMR",
+    "ci_required": "^(PR Title|phpstan|Rector PHP Analysis)\\b",
     "mass_files": 150,
     "mechanical": "^(version\\.php|sql/database\\.sql|sql/[0-9_]+-to-[0-9_]+_upgrade\\.sql|\\.phpstan/.*)$",
     "mechanical_note": "version.php, the SQL install and upgrade scripts, and PHPStan's baseline and caps",

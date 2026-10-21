@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **`motion`: "CI not run" when the real CI never started.** GitHub holds the Actions workflows of a first-time contributor's fork PR until a maintainer approves them; until then the head carries only app checks (DCO, CodeRabbit, auto-merge), and "nothing failing" read as passing. A profile's `motion.ci_required` names a check that shows CI ran; without a match the PR reads "CI not run" and stays out of "Nothing blocking". A failing check still reads as failing, and a profile without the key reads CI as before. The OpenEMR profile sets `^(PR Title|phpstan|Rector PHP Analysis)\b`, present on all 216 open PRs whose CI ran and none of the 85 whose CI didn't (2026-10-21). In that morning's build, 27 of 77 "Nothing blocking" PRs had never run CI.
+
 ## 0.5.0 (2026-10-21)
 
 - **`pr-toolbox motion check-page`:** opens a built page in a headless browser, at desktop and phone widths and in dark mode, and checks what a reader meets. That covers:

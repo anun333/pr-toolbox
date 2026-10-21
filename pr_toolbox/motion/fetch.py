@@ -37,7 +37,11 @@ QUERY = """query($cursor: String) {
 # default), and a cancelled run is not a failure. GitHub's own rollup state counts both, so a PR whose only red is a
 # coverage report would read as failing.
 CI_IGNORE = re.compile(P.get("ci_ignore") or r"^codecov/")
-FAILED = {"FAILURE", "TIMED_OUT", "STARTUP_FAILURE", "ACTION_REQUIRED", "ERROR"}
+# A check that must be there before CI counts as run. GitHub holds the workflows of a fork PR from a first-time
+# contributor until a maintainer approves them; until then the head carries only checks such as an app's DCO, and
+# nothing failing would read as passing.
+CI_REQUIRED = re.compile(P["ci_required"]) if P.get("ci_required") else None
+FAILED ={"FAILURE", "TIMED_OUT", "STARTUP_FAILURE", "ACTION_REQUIRED", "ERROR"}
 PENDING = {"PENDING", "EXPECTED", "QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED"}
 
 
@@ -50,12 +54,13 @@ def ci_state(rollup):
     nodes = contexts.get("nodes") or []
     if contexts.get("totalCount", 0) > len(nodes):
         return rollup.get("state"), []
-    failing, pending, counted = [], 0, 0
+    failing, pending, counted, required_seen = [], 0, 0, CI_REQUIRED is None
     for ctx in nodes:
         name = ctx.get("name") or ctx.get("context") or "?"
         if CI_IGNORE.search(name):
             continue
         counted += 1
+        required_seen = required_seen or bool(CI_REQUIRED.search(name))
         state = (ctx.get("conclusion") or ctx.get("state") or ctx.get("status") or "").upper()
         if state in FAILED:
             failing.append(name)
@@ -63,6 +68,8 @@ def ci_state(rollup):
             pending += 1
     if failing:
         return "FAILURE", sorted(set(failing))
+    if not required_seen:
+        return None, []
     return ("PENDING" if pending else "SUCCESS" if counted else rollup.get("state")), []
 
 

@@ -381,12 +381,25 @@ class CiState(unittest.TestCase):
         cls.ns = {"re": re}
         exec(compile(ast.Module(body=keep, type_ignores=[]), "fetch.py", "exec"), cls.ns)
 
-    def read(self, ignore: str, *checks, total=None):
+    def read(self, ignore: str, *checks, total=None, required=None):
         nodes = [{"__typename": "CheckRun", "name": n, "conclusion": c if c not in {"IN_PROGRESS"} else None,
                   "status": "IN_PROGRESS" if c == "IN_PROGRESS" else "COMPLETED"} for n, c in checks]
         self.ns["CI_IGNORE"] = re.compile(ignore)
+        self.ns["CI_REQUIRED"] = re.compile(required) if required else None
         rollup = {"state": "FAILURE", "contexts": {"totalCount": total or len(nodes), "nodes": nodes}}
         return self.ns["ci_state"](rollup)
+
+    def test_ci_that_never_ran_is_not_passing(self) -> None:
+        # nextcloud/server#61279 on 2026-10-21: a fork PR whose workflows wait for a maintainer's approval carries
+        # only the DCO app's check and a skipped job
+        required = "^(static-code-analysis|PHPUnit)"
+        not_run = [("DCO", "SUCCESS"), ("auto-approve-merge", "SKIPPED")]
+        self.assertEqual((None, []), self.read("^codecov/", *not_run, required=required))
+        self.assertEqual(("SUCCESS", []), self.read("^codecov/", *not_run, ("static-code-analysis", "SUCCESS"), required=required),
+                         "control: the required check is present")
+        self.assertEqual(("FAILURE", ["DCO"]), self.read("^codecov/", ("DCO", "FAILURE"), required=required),
+                         "a failing check still reads as failing")
+        self.assertEqual(("SUCCESS", []), self.read("^codecov/", *not_run), "no ci_required in the profile: read as before")
 
     def test_codecov_and_the_summary_job_are_left_out(self) -> None:
         ignore = "^(codecov/.*|All Checks Passed)$"

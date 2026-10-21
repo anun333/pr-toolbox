@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.4.1 (2026-10-20)
+
+`pr-toolbox motion` is faster, with the same findings.
+
+| On OpenEMR's 302 open PRs, 4 threads | 0.4.0 | 0.4.1 |
+|---|---|---|
+| Full build | 1,183 s | 397 s |
+| Rebuild after the base moved 12 merges | 978 s | 249 s |
+| Rebuild when nothing moved (audit stage) | 269 s | 11 s |
+
+- **Master's definitions, indexed once:** class and function definitions are indexed in one pass, and callers of removed names are found with three batched searches, instead of one whole-tree search per name.
+- **Subclasses in one search:** subclasses of changed classes are found in one search and read through one `git cat-file` process.
+- **Stacked results cached:** cached by the two PRs' heads, since they don't depend on the base.
+- **Parallel merges:** merges onto the base, re-merges, caps checks and pair merges run on `--threads` threads.
+- **Timings:** the audit summary records each stage's time, and `motion compare` ignores them.
+
+Each figure was checked by comparing findings with the previous version's for the same commits. They are identical in every category.
+
 ## 0.4.0 (2026-10-20)
 
 New command: **`pr-toolbox motion`**, a map of every open PR for the people who merge.

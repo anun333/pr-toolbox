@@ -23,7 +23,7 @@ They don't comment, label, ping or re-run anything on GitHub. `health` and `chec
 ## Install
 
 ```
-pipx install git+https://github.com/anun333/pr-toolbox@v0.4.0
+pipx install git+https://github.com/anun333/pr-toolbox@v0.4.1
 ```
 
 Or clone the repository and run `./pr-toolbox` from it; nothing needs installing.
@@ -218,7 +218,7 @@ A step that can't run counts as a failure, not a pass. The exit code is 1 when a
 ## `motion`: a map for maintainers
 
 ```
-pr-toolbox motion                 # fetch, audit, controls, page: ~20 minutes for 300 PRs, less when little moved
+pr-toolbox motion                 # fetch, audit, controls, page: ~7 minutes for 300 PRs on 4 threads, seconds when little moved
 pr-toolbox motion --skip-fetch    # rebuild from the inputs already in the cache
 ```
 

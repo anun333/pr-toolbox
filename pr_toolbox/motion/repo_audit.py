@@ -369,10 +369,30 @@ pair_cache = W / "pairs.json"
 pairs = json.loads(pair_cache.read_text()) if pair_cache.exists() else {}
 pairs = pairs if pairs.get("master") == MASTER_SHA or moved is not None else {"master": MASTER_SHA, "pairs": {}}
 fresh = {}
+
+
+def pair_still_holds(a, b, old):
+    """A pair's result from an earlier base still holds when the base changed none of the files both PRs change and
+    neither PR's standing against the base changed. With both merging cleanly onto the base, a conflict between them
+    can only be in a file they both change; a file only one changes merges as it does onto the base alone."""
+    if old.get("master", pairs.get("master")) == MASTER_SHA:
+        return True
+    if moved is None:
+        return False
+    if old["how"] == "onto master":
+        if not (onto[a] and onto[b]) or (pr_paths[a] & pr_paths[b] & moved):
+            return False
+        if a in touches_caps and b in touches_caps and any(f == CRULE["file"] or f.startswith(CAPS_DIR) for f in moved):
+            return False  # caps count the baselines, which either PR may leave as the base has them
+        return True
+    # branch to branch: the two heads merged directly, less each PR's conflicts with the base
+    return not (onto[a] and onto[b]) and not touches_moved(a) and not touches_moved(b)
+
+
 for a, b in sorted(share):
     key = f"{a}:{HEADS[a]},{b}:{HEADS[b]}"
     old = pairs["pairs"].get(key)
-    if old is not None and (old.get("master", pairs.get("master")) == MASTER_SHA or not touches_moved(a, b)):
+    if old is not None and pair_still_holds(a, b, old):
         old.setdefault("master", pairs.get("master"))
         fresh[key] = old
         INCREMENTAL["pairs_reused"] += 1

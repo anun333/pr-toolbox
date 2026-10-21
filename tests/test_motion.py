@@ -209,6 +209,27 @@ class MotionFixture(unittest.TestCase):
         self.assertEqual(r.returncode, 2, "a quote its source doesn't contain must stop the build")
 
 
+    def test_packets_record_the_heads_they_read(self) -> None:
+        cache = self.tmp / "sem"
+        (cache / "audit").mkdir(parents=True, exist_ok=True)
+        shutil.copy(self.work / "prs.json", cache / "audit" / "prs.json")
+        meta = [{"number": n, "title": f"PR {n}", "isDraft": False, "createdAt": "2026-10-01T00:00:00Z", "updatedAt": "2026-10-02T00:00:00Z",
+                 "author": {"login": f"author{n}"}, "labels": []} for n in self.numbers]
+        (cache / "pr-meta.json").write_text(json.dumps(meta))
+        (cache / "pr-bodies.json").write_text(json.dumps([{"number": n, "body": f"Partner is #{7 if n == 6 else 6}.\nOther line."} for n in self.numbers]))
+        pair = {"a": 6, "b": 7, "score": 1, "read": True, "text_conflict": True, "stacked": False, "titles": ["PR 6", "PR 7"],
+                "authors": ["author6", "author7"], "anchors": [{"kind": "route family", "name": "/api/widgets", "a": ["adds routes"], "b": ["adds routes"], "weight": 2}]}
+        (cache / "candidates.json").write_text(json.dumps({"master": self.base, "pairs": 1, "candidates": [pair]}))
+        r = subprocess.run([sys.executable, "-I", str(MOTION / "semantic_packets.py"), str(self.repo), str(cache)],
+                           capture_output=True, text=True, env={**os.environ, "WIM_PROFILE": str(self.profile)})
+        self.assertEqual(r.returncode, 0, r.stderr[-1500:])
+        heads = json.loads((cache / "semantic" / "heads.json").read_text())
+        self.assertEqual(heads["pairs"]["6-7"], {"6": git(self.repo, "rev-parse", "refs/pr/6"), "7": git(self.repo, "rev-parse", "refs/pr/7")})
+        packet = (cache / "semantic" / "packets" / "6-7" / "pr-6.md").read_text()
+        self.assertIn("[a line naming #7 was withheld", packet, "the partner's mention is withheld")
+        self.assertNotIn("Partner is #7", packet)
+
+
 HAVE_PHP = bool(shutil.which("php") or shutil.which("docker"))
 
 

@@ -4,7 +4,8 @@ changed files, and the diffs of the files where the two meet (capped, keeping th
 concept when a diff is long). Readers get these as data, never as instructions.
 
     python3 -I semantic_packets.py <clone> <cache dir>
-Writes <cache>/semantic/packets/<a>-<b>/{pair.json, pr-<a>.md, pr-<b>.md} and <cache>/semantic/batches.json.
+Writes <cache>/semantic/packets/<a>-<b>/{pair.json, pr-<a>.md, pr-<b>.md}, <cache>/semantic/batches.json, and
+<cache>/semantic/heads.json (each pair's heads as read).
 """
 import json
 import os
@@ -121,5 +122,9 @@ n_batches = 5
 size = -(-len(order) // n_batches)
 batches = [[f"{x['a']}-{x['b']}" for x in order[i:i + size]] for i in range(0, len(order), size)]
 (C / "semantic" / "batches.json").write_text(json.dumps(batches, indent=1))
-sizes = [sum((OUT / p / f).stat().st_size for f in ("pr-%s.md" % p.split("-")[0], "pr-%s.md" % p.split("-")[1])) for b in batches for p in b]
+# each pair's heads as read, so the page can mark a reading whose PRs have moved since as read on an earlier version
+(C / "semantic" / "heads.json").write_text(json.dumps({
+    "read_at": cands["master"], "candidates": cands["pairs"],
+    "pairs": {f"{x['a']}-{x['b']}": {str(x["a"]): prs[x["a"]]["head"], str(x["b"]): prs[x["b"]]["head"]} for x in chosen}}, indent=1))
+sizes = [sum((OUT / p / f).stat().st_size for f in ("pr-%s.md" % p.split("-")[0], "pr-%s.md" % p.split("-")[1])) for b in batches for p in b] or [0]
 print(json.dumps({"packets": len(chosen), "batches": [len(b) for b in batches], "kb_per_pair_max": max(sizes) // 1024, "kb_total": sum(sizes) // 1024}))

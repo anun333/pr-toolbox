@@ -392,13 +392,14 @@ data["controls"] = json.loads((W / "controls-result.json").read_text()) if (W / 
 SEM = G / "semantic"
 items, tally = [], Counter()
 if (SEM / "verdicts").is_dir():
-    heads_then = json.loads((SEM / "heads.json").read_text())
+    # each pair's heads at reading time (written by semantic_packets.py); without it, no reading can show as stale
+    heads_then = json.loads((SEM / "heads.json").read_text()) if (SEM / "heads.json").exists() else {"pairs": {}, "candidates": None, "read_at": ""}
     for f in sorted((SEM / "verdicts").glob("*.json")):
         v = json.loads(f.read_text())
         a_, b_ = (int(x) for x in v["pair"].split("-"))
         check = json.loads((SEM / "checks" / f.name).read_text()) if (SEM / "checks" / f.name).exists() else None
         then = heads_then["pairs"].get(v["pair"], {})
-        stale = any(prs_git.get(x, {}).get("head") != then.get(str(x)) for x in (a_, b_))
+        stale = bool(then) and any(prs_git.get(x, {}).get("head") != then.get(str(x)) for x in (a_, b_))
         outcome = check["outcome"] if check else ("unchecked" if v["verdict"] in ("clash", "maybe") else "")
         tally[v["verdict"] if outcome != "refuted" else "refuted"] += 1
         if v["verdict"] in ("clash", "maybe") and outcome != "refuted":

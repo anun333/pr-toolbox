@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.2 (2026-10-20)
+
+- `pr-toolbox motion packets` now records each pair's heads in `semantic/heads.json`. Before, the page needed that file written by hand, and failed without it once verdicts existed.
+- The page now builds when that file is missing, showing no reading as stale.
+- A test covers both, and that packets withhold each PR's mention of its partner.
+
 ## 0.4.1 (2026-10-20)
 
 `pr-toolbox motion` is faster, with the same findings.

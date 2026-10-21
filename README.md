@@ -23,7 +23,7 @@ They don't comment, label, ping or re-run anything on GitHub. `health` and `chec
 ## Install
 
 ```
-pipx install git+https://github.com/anun333/pr-toolbox@v0.4.1
+pipx install git+https://github.com/anun333/pr-toolbox@v0.4.2
 ```
 
 Or clone the repository and run `./pr-toolbox` from it; nothing needs installing.

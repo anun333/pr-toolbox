@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "pr-toolbox"
 dynamic = ["version"]
-description = "Quiet, local tools for people who send pull requests to any GitHub project: landing order, PR health, and a pre-push check, with a built-in OpenEMR profile."
+description = "Quiet, local tools for people who send or merge pull requests on any GitHub project: landing order, PR health, a pre-push check, and a map of all open PRs, with a built-in OpenEMR profile."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "GPL-3.0-or-later"
@@ -30,10 +30,10 @@ pr-tools = "pr_toolbox.__main__:main"
 openemr-pr-tools = "pr_toolbox.__main__:main"
 
 [tool.setuptools]
-packages = ["pr_toolbox", "openemr_pr_tools"]
+packages = ["pr_toolbox", "pr_toolbox.motion", "openemr_pr_tools"]
 
 [tool.setuptools.package-data]
-pr_toolbox = ["presets/*.json"]
+pr_toolbox = ["presets/*.json", "motion/*.php", "motion/*.html", "motion/*.md"]
 
 [tool.setuptools.dynamic]
 version = { attr = "pr_toolbox.__version__" }

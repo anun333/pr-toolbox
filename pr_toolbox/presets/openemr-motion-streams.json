@@ -4,7 +4,9 @@
     "name": "opencoreemr/openemr-phpstan-rules",
     "packagist": "https://packagist.org/packages/opencoreemr/openemr-phpstan-rules",
     "description": "PHPStan rules for OpenEMR core and module development",
-    "adopting_pr": 10263
+    "adopting_pr": 10263,
+    "heading": "Module authors: the same checks core runs",
+    "text": "Core's PHPStan reports new $GLOBALS reads, superglobals, legacy sql* calls, curl_*, error_log() and more. None of that reaches a module outside the repository. The rules are published as a package:"
   },
   "general": [
     {
@@ -913,5 +915,6 @@
         }
       ]
     }
-  ]
+  ],
+  "general_heading": "From AGENTS.md"
 }

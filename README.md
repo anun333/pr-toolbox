@@ -7,11 +7,14 @@ Quiet, local tools for people who send pull requests to a busy GitHub project:
 | `pr-toolbox landing` | Which open PRs does each of my PRs conflict with, and in what order should they land? |
 | `pr-toolbox health` | What changed on my open PRs since I last looked: CI, conflicts with the base branch, review threads, merges? |
 | `pr-toolbox check` | What will the project's CI say about this branch, before I push it? |
+| `pr-toolbox motion` | For maintainers: what does merging each open PR do to the others, and where is each area of the code going? |
 
 Large projects can have hundreds of open pull requests and a few volunteers to review them. These tools help a contributor:
 - arrive with a branch that's green the first time;
 - say up front what their PR conflicts with;
 - notice what changed on their PRs.
+
+`motion` is for the people who merge: one page covering every open PR at once.
 
 They work on any GitHub repository. They were first written for [OpenEMR](https://github.com/openemr/openemr), which has a built-in profile (see [The OpenEMR profile](#the-openemr-profile)). The command is `pr-toolbox`. `pr-tools` and `openemr-pr-tools`, its names before 0.3.0, also work.
 
@@ -212,6 +215,35 @@ A step that can't run counts as a failure, not a pass. The exit code is 1 when a
 
 **CPU.** The steps run one after another. `--workers` fills `{workers}` in the profile's commands.
 
+## `motion`: a map for maintainers
+
+```
+pr-toolbox motion                 # fetch, audit, controls, page: ~20 minutes for 300 PRs, less when little moved
+pr-toolbox motion --skip-fetch    # rebuild from the inputs already in the cache
+```
+
+It writes one self-contained HTML page (`~/.cache/pr-toolbox-motion/work-in-motion.html` unless `--out` says otherwise):
+- **Every open PR merged onto the base branch,** and every pair of PRs that shares a file merged on top of that, with `git merge-tree` in memory. Conflicts are split into code and mechanical files (version files, migrations, lint baselines), so a rebase with no code decision in it says so.
+- **Breaks that merge cleanly as text:** a file one PR deletes and another changes; one PR built on another; the same method changed twice; for PHP, a removed function still called and a signature change an override elsewhere would no longer satisfy; two PRs claiming one version number (`version_claims`); two PRs that each keep an exact lint cap and break it together (`exact_caps`); names two PRs both add (routes, tables, settings: whatever the profile lists).
+- **The maintainers' plan per area,** quoted from their own documents and issues, each quote checked word for word against its source on every build: a quote that drifts stops the build.
+- **A path forward:** decide between overlapping PRs, review what nothing blocks, rebase where the fix is mechanical, then pick up new work in each plan's own order, on files no open PR changes.
+- **A triage table** of every open PR with CI, maintainer review, conflicts, breaks, fit with the plan and size, filterable. Its "Nothing blocking" view is not a review: it says only that reviewing a PR won't be wasted on a rebase or a collision.
+- **Evidence on every claim:** each PR card names the commits it was computed on and the git commands that reproduce it.
+
+Caches are keyed by the base's commit and each PR's head and merge base. When the base moves, only PRs and pairs touching a file it changed are merged again; reused results are re-merged and compared whenever they are needed, and a disagreement is reported (`incremental.rule_violations`). `--master <sha>` replays a build at a pinned base, and `pr-toolbox motion compare A B` checks that two findings files for the same commits agree.
+
+**Controls.** Every build first checks known cases from the profile: each must be found (or, for a negative case, must not be), or the build stops instead of printing a silent zero. The page lists the results.
+
+**Reading for semantic clashes** (optional, judgement). Two PRs can merge cleanly and still disagree about one concept in different files. `pr-toolbox motion candidates` picks pairs from different authors that meet on one concept (a domain resource, a table both write, a route family, a method one changes and the other newly calls), weighted by how few PRs share it. `pr-toolbox motion packets` writes one packet per pair, with each PR's mention of its partner withheld so a reading rests on the code. Readers, people or agents following [`semantic_reader_prompt.md`](pr_toolbox/motion/semantic_reader_prompt.md), write a verdict per pair, a second reading tries to refute each clash, and the page shows what survives, labelled as judgement.
+
+**Profile keys.** A `motion` section in the profile sets the project's name, mechanical files, release-tag pattern, labels and paths to leave out, bots, the files that count as code, the symbol reader (`"php"`, or none), shared-name kinds, upgrade-file rules, semantic anchors, and `streams` (the areas: quoted targets with their sources, plan issues, retired patterns, how each plan cuts its remaining work) and `controls`. Every key has a neutral default; the [OpenEMR profile](pr_toolbox/presets/openemr.json) sets them all.
+
+**Requirements.** As for the other commands, plus `docker` or `php` for the PHP symbol checks (the pinned `php:8.3-cli` image is preferred so every build reads code with the same tokenizer); without either, those checks are skipped and the page says so.
+
+**Care.** The page names every open PR and its author, with failing CI and conflicts. It is generated locally and posted nowhere; show it to the project's maintainers before anyone else.
+
+**Prior art.** Merge queues (GitHub's, Mergify, bors) test one combination at merge time and only for what tests cover; Gerrit lists conflicts with other changes; ConflictBot and Rust's triagebot comment on PRs. `motion` looks ahead across every open PR at once, adds the project's plan, and comments nowhere.
+
 ## The OpenEMR profile
 
 The built-in [`openemr`](pr_toolbox/presets/openemr.json) profile is what the tools were first written for, and it's a worked example of every key. For a clone of `openemr/openemr` it's used automatically.
@@ -224,6 +256,8 @@ The built-in [`openemr`](pr_toolbox/presets/openemr.json) profile is what the to
   - `rector`: a dry run;
   - `phpstan`: the full analysis with CI's `.phpstan/phpstan.ci.neon`, limited to `--workers` processes;
   - `tests-isolated` and `tests`: each changed test file, with `phpunit-isolated.xml` or `phpunit.xml`.
+
+- **`motion`**: twelve areas with targets quoted from `AGENTS.md` and the maintainers' issues, the patterns each plan retires, how each plan cuts its remaining work, OpenEMR's shared-name kinds (routes, tables, upgrade columns, list ids, global settings, menu ids, events), FHIR resources as semantic anchors, the PHP symbol reader, and controls drawn from real open PRs. Access-control code is left out.
 
 OpenEMR asks that AI-assisted commits say so, for example:
 
@@ -242,7 +276,8 @@ The `pr_toolbox` modules can also be imported. `common.resolve()` returns the ta
 
 ## Limits
 
-- **Textual conflicts and the profile's rules only.** Two PRs can merge cleanly and still not work together; reading them is the only check for that.
+- **Textual conflicts and the profile's rules only.** Two PRs can merge cleanly and still not work together; `motion`'s reading step is the only check for that, and it is judgement.
+- **`motion` compares pairs, not larger combinations,** and lists PRs over its file limit instead of comparing them pair by pair. Its signature check follows one level of inheritance.
 - **A snapshot.** Any merge or push can change the answer, which is what `--if-due` is for.
 - **`check` is only as good as its profile.** Its steps are the commands you give it, and a step that's missing isn't run.
 

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Two findings.json files for the same master and PR heads must say the same thing. Used to prove an incremental
 rebuild equals a full one. Lists are compared as sets of JSON rows, since reused and recomputed results can come
 out in a different order; the summary's incremental counters are left out.

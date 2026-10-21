@@ -1,0 +1,268 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""pr-toolbox motion against a throwaway repository with crafted pull-request refs: every check must find the case
+built for it, a wrong control must stop the build, an incremental rebuild after the base moves must equal a full
+one, and a quote that no longer matches its source must stop the page. No network, no OpenEMR checkout."""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+MOTION = ROOT / "pr_toolbox" / "motion"
+sys.path.insert(0, str(ROOT))
+
+from pr_toolbox.motion import cli  # noqa: E402
+
+
+def git(repo: Path, *args: str) -> str:
+    return subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, text=True).stdout.strip()
+
+
+def write(repo: Path, files: dict[str, str | None]) -> None:
+    for name, text in files.items():
+        path = repo / name
+        if text is None:
+            path.unlink()
+            continue
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
+
+def commit(repo: Path, files: dict[str, str | None], message: str) -> str:
+    write(repo, files)
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", message)
+    return git(repo, "rev-parse", "HEAD")
+
+
+def pr(repo: Path, n: int, base: str, files: dict[str, str | None]) -> str:
+    """A pull request: a commit on top of base, kept as refs/pr/<n>."""
+    git(repo, "checkout", "-q", "--detach", base)
+    sha = commit(repo, files, f"PR {n}")
+    git(repo, "update-ref", f"refs/pr/{n}", sha)
+    git(repo, "checkout", "-q", "master")
+    return sha
+
+
+PROFILE = {
+    "github": "example/app", "owner": "example", "name": "app", "remote": "origin", "base_branch": "master",
+    "version_claims": {"file": "version.txt", "pattern": r"db = (\d+)", "related": ["version.txt"]},
+    "exact_caps": None,
+    **cli.DEFAULTS,
+    "title": "App Work in Motion", "project": "App", "mechanical": r"^version\.txt$", "symbols": None,
+    "release_tags": {"pattern": r"^v(\d+)\.(\d+)\.0$", "count": 2},
+    "name_paths": ["routes"],
+    "names": [{"kind": "route", "where": {"prefix": "routes/"}, "pattern": r"""['"]((?:GET|POST) /api/[^'"]*)['"]"""}],
+    "streams": {"general": [], "rules_package": None, "streams": []},
+}
+
+
+class MotionFixture(unittest.TestCase):
+    """One repository for the whole class: a base, two release tags, and nine crafted PRs."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.tmp = Path(tempfile.mkdtemp())
+        repo = cls.repo = cls.tmp / "repo"
+        repo.mkdir()
+        git(repo, "init", "-q", "-b", "master")
+        git(repo, "config", "user.email", "t@example.org")
+        git(repo, "config", "user.name", "t")
+        base = commit(repo, {"a.txt": "one\ntwo\nthree\n", "b.txt": "keep me\n", "c.txt": "unrelated\n",
+                             "GUIDE.md": "# Guide\n\nNew code goes in `src/`, and every change needs a test.\n",
+                             "version.txt": "db = 10\n", "routes/api.php": "<?php\n"}, "base")
+        git(repo, "tag", "v1.0.0")
+        base = commit(repo, {"c.txt": "unrelated, changed\n"}, "second")
+        git(repo, "tag", "v1.1.0")
+        git(repo, "update-ref", "refs/remotes/origin/master", base)
+        cls.base = base
+        pr(repo, 1, base, {"a.txt": "one\nTWO from 1\nthree\n"})
+        pr(repo, 2, base, {"a.txt": "one\nTWO from 2\nthree\n"})              # conflicts with 1
+        git(repo, "checkout", "-q", "--detach", "refs/pr/1")
+        git(repo, "update-ref", "refs/pr/3", commit(repo, {"d.txt": "on top of 1\n"}, "PR 3"))  # built on 1
+        git(repo, "checkout", "-q", "master")
+        pr(repo, 4, base, {"b.txt": None})                                   # deletes b
+        pr(repo, 5, base, {"b.txt": "keep me, edited\n"})                    # changes b
+        pr(repo, 6, base, {"routes/api.php": "<?php\n'GET /api/widgets' => 1;\n"})
+        pr(repo, 7, base, {"routes/api.php": "<?php\n// other\n", "routes/more.php": "<?php\n'GET /api/widgets' => 2;\n"})
+        pr(repo, 8, base, {"version.txt": "db = 11\n", "e.txt": "x\n"})       # claims 11
+        pr(repo, 9, base, {"version.txt": "db = 11\n", "f.txt": "y\n"})       # claims 11 too
+        cls.numbers = list(range(1, 10))
+        cls.prlist = cls.tmp / "open-prs.txt"
+        cls.prlist.write_text("".join(f"{n} master\n" for n in cls.numbers))
+        cls.profile = cls.tmp / "profile.json"
+        cls.profile.write_text(json.dumps(PROFILE))
+        cls.work = cls.tmp / "audit"
+        cls.findings = cls.audit(cls.work)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    @classmethod
+    def audit(cls, work: Path, master: str | None = None) -> dict:
+        env = {**os.environ, "WIM_PROFILE": str(cls.profile)}
+        if master:
+            env["WIM_MASTER"] = master
+        r = subprocess.run([sys.executable, "-I", str(MOTION / "repo_audit.py"), str(cls.repo), str(work), str(cls.prlist)],
+                           capture_output=True, text=True, env=env)
+        if r.returncode:
+            raise AssertionError(r.stderr[-2000:])
+        return json.loads((work / "findings.json").read_text())
+
+    def test_text_conflict(self) -> None:
+        self.assertIn([1, 2], [x["prs"] for x in self.findings["text_conflict"]])
+
+    def test_stacked(self) -> None:
+        self.assertIn({"contained": 1, "in": 3, "how": "built on it"}, self.findings["stacked"])
+
+    def test_deleted_still_changed(self) -> None:
+        self.assertTrue(any(x["deletes"] == 4 and x["changes"] == 5 for x in self.findings["deleted_changed"]))
+
+    def test_shared_name(self) -> None:
+        self.assertIn({"kind": "route", "name": "GET /api/widgets", "prs": [6, 7]}, self.findings["shared_name"])
+
+    def test_version_claim_shared(self) -> None:
+        self.assertEqual(self.findings["version_claims"]["shared"], {"11": [8, 9]})
+
+    def test_exactly_the_conflicting_pairs(self) -> None:
+        """1 and 2 edit one line; 3 carries 1's edit; 4 deletes what 5 edits; 6 and 7 insert at one spot."""
+        pairs = {tuple(x["prs"]) for x in self.findings["text_conflict"]}
+        self.assertEqual(pairs, {(1, 2), (2, 3), (4, 5), (6, 7)})
+
+    def run_controls(self, controls: list[dict]) -> subprocess.CompletedProcess:
+        path = self.tmp / "controls.json"
+        path.write_text(json.dumps({"controls": controls}))
+        return subprocess.run([sys.executable, "-I", str(MOTION / "controls.py"), str(self.work / "findings.json"), str(self.prlist), str(path)],
+                              capture_output=True, text=True)
+
+    def test_controls_pass_on_known_cases(self) -> None:
+        r = self.run_controls([{"name": "1 and 2 conflict", "prs": [1, 2], "in": "text_conflict", "match": {"prs": [1, 2]}},
+                               {"name": "3 is built on 1", "prs": [1, 3], "in": "stacked", "match": {"contained": 1, "in": 3}}])
+        self.assertEqual(r.returncode, 0, r.stdout)
+
+    def test_wrong_control_stops_the_build(self) -> None:
+        r = self.run_controls([{"name": "5 and 6 conflict (they don't)", "prs": [5, 6], "in": "text_conflict", "match": {"prs": [5, 6]}}])
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("VOID", r.stdout)
+
+    def test_incremental_rebuild_equals_full(self) -> None:
+        """Base moves under the cache: only PRs touching the files it changed are merged again, and the result
+        equals a build from nothing."""
+        work = self.tmp / "incremental"
+        old = git(self.repo, "rev-parse", "refs/remotes/origin/master")
+        shutil.copytree(self.work, work)
+        git(self.repo, "checkout", "-q", "--detach", old)
+        moved = commit(self.repo, {"a.txt": "one\ntwo\nthree, moved\n"}, "base moves, touching a.txt")
+        git(self.repo, "checkout", "-q", "master")
+        try:
+            inc = self.audit(work, master=moved)
+            full = self.audit(self.tmp / "full", master=moved)
+        finally:
+            pass
+        stats = inc["summary"]["incremental"]
+        self.assertEqual(stats["rule_violations"], [])
+        self.assertGreater(stats["pairs_reused"], 0, "pairs not touching a.txt are reused")
+        r = subprocess.run([sys.executable, "-I", str(MOTION / "compare_findings.py"), str(work / "findings.json"),
+                            str(self.tmp / "full" / "findings.json")], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout)
+
+
+    def page(self, quote: str) -> subprocess.CompletedProcess:
+        """intent.py over the fixture's findings, with one area whose target quotes GUIDE.md."""
+        g = self.tmp / "inputs"
+        (g / "issues").mkdir(parents=True, exist_ok=True)
+        heads = {n: git(self.repo, "rev-parse", f"refs/pr/{n}") for n in self.numbers}
+        meta = [{"number": n, "title": f"PR {n}", "isDraft": False, "createdAt": "2026-10-01T00:00:00Z", "updatedAt": "2026-10-02T00:00:00Z",
+                 "author": {"login": f"author{n}"}, "labels": [], "baseRefName": "master"} for n in self.numbers]
+        (g / "pr-meta.json").write_text(json.dumps(meta))
+        (g / "pr-bodies.json").write_text(json.dumps([{"number": n, "body": "", "reviewDecision": None} for n in self.numbers]))
+        (g / "pr-extra.json").write_text(json.dumps({n: {"head": heads[n], "additions": 1, "deletions": 0, "files": 1, "author_role": "CONTRIBUTOR",
+                                                         "comments": 0, "closing": [], "reviews": [], "ci": "SUCCESS"} for n in self.numbers}))
+        (g / "mergers.json").write_text("{}")
+        profile = {**PROFILE, "streams": {"general": [], "rules_package": None, "streams": [
+            {"id": "code", "title": "Code layout", "summary": "Where code goes.", "plan": [], "before": [],
+             "target": [{"text": quote, "source": "GUIDE.md", "url": "https://github.com/example/app/blob/master/GUIDE.md"}]}]}}
+        path = self.tmp / "page-profile.json"
+        path.write_text(json.dumps(profile))
+        return subprocess.run([sys.executable, "-I", str(MOTION / "intent.py"), str(self.repo), str(self.work), str(g),
+                               str(MOTION / "page.html"), str(self.tmp / "page.html")],
+                              capture_output=True, text=True, env={**os.environ, "WIM_PROFILE": str(path)})
+
+    def test_page_renders_with_a_checked_quote(self) -> None:
+        r = self.page("New code goes in src/, and every change needs a test.")
+        self.assertEqual(r.returncode, 0, r.stderr[-1500:])
+        page = (self.tmp / "page.html").read_text()
+        self.assertIn("<title>App Work in Motion</title>", page)
+        data = json.loads((self.work / "map.json").read_text())
+        self.assertEqual(data["streams"][0]["target"][0]["verified"], "verbatim")
+
+    def test_a_drifted_quote_stops_the_page(self) -> None:
+        r = self.page("New code goes in lib/, and every change needs a test.")
+        self.assertEqual(r.returncode, 2, "a quote its source doesn't contain must stop the build")
+
+
+HAVE_PHP = bool(shutil.which("php") or shutil.which("docker"))
+
+
+@unittest.skipUnless(HAVE_PHP, "needs php or docker for PHP's tokenizer")
+class PhpSignatures(unittest.TestCase):
+    def test_an_override_php_would_refuse(self) -> None:
+        tmp = Path(tempfile.mkdtemp())
+        try:
+            repo = tmp / "repo"
+            repo.mkdir()
+            git(repo, "init", "-q", "-b", "master")
+            git(repo, "config", "user.email", "t@example.org")
+            git(repo, "config", "user.name", "t")
+            base = commit(repo, {"src/Base.php": "<?php\nabstract class Base\n{\n    abstract public function make($x);\n}\n"}, "base")
+            git(repo, "update-ref", "refs/remotes/origin/master", base)
+            pr(repo, 10, base, {"src/Base.php": "<?php\nabstract class Base\n{\n    abstract public function make($x): array;\n}\n"})
+            pr(repo, 11, base, {"src/Child.php": "<?php\nclass Child extends Base\n{\n    public function make($x)\n    {\n        return [];\n    }\n}\n"})
+            (tmp / "prs.txt").write_text("10 master\n11 master\n")
+            (tmp / "profile.json").write_text(json.dumps({**PROFILE, "symbols": "php", "mechanical": "$^"}))
+            r = subprocess.run([sys.executable, "-I", str(MOTION / "repo_audit.py"), str(repo), str(tmp / "audit"), str(tmp / "prs.txt")],
+                               capture_output=True, text=True, env={**os.environ, "WIM_PROFILE": str(tmp / "profile.json")})
+            self.assertEqual(r.returncode, 0, r.stderr[-1500:])
+            found = json.loads((tmp / "audit" / "findings.json").read_text())["signature"]
+            self.assertTrue(any(x["changes"] == 10 and x["overrides"] == 11 and x["method"] == "Base::make" for x in found), found)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+class Profiles(unittest.TestCase):
+    def test_openemr_preset_carries_motion(self) -> None:
+        from pr_toolbox import common
+        cfg = common.load_config(Path("."), "openemr/openemr", preset="openemr")
+        target = common.Target(Path("."), "upstream", "openemr/openemr", "master", cfg)
+        p = cli.resolve_profile(target, None)
+        self.assertEqual(p["title"], "OpenEMR Work in Motion")
+        self.assertTrue(p["streams"]["streams"], "OpenEMR's areas come with the preset")
+        self.assertTrue(p["controls"]["controls"], "and its controls")
+        self.assertTrue(all("url" in t for s in p["streams"]["streams"] for t in s["target"]), "every target cites its source")
+
+    def test_neutral_defaults_for_any_repository(self) -> None:
+        from pr_toolbox import common
+        target = common.Target(Path("."), "origin", "someone/thing", "main", {})
+        p = cli.resolve_profile(target, None)
+        self.assertEqual(p["title"], "thing Work in Motion")
+        self.assertEqual(p["mechanical"], "$^", "no rules, no mechanical files")
+        self.assertEqual(p["streams"]["streams"], [])
+
+    def test_mechanical_files_follow_the_rules(self) -> None:
+        from pr_toolbox import common
+        cfg = {"version_claims": {"file": "VERSION", "related": ["VERSION", "db/*.sql"]}}
+        p = cli.resolve_profile(common.Target(Path("."), "origin", "a/b", "main", cfg), None)
+        self.assertRegex("db/upgrade.sql", p["mechanical"])
+        self.assertNotRegex("src/app.py", p["mechanical"])
+
+
+if __name__ == "__main__":
+    unittest.main()

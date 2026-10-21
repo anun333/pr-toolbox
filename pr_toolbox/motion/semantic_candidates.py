@@ -1,15 +1,19 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Pairs of open PRs worth reading for a semantic clash: two PRs from different authors that meet on the same
-concept without needing to share a file, where git and the checks in repo_audit.py see nothing. Anchors:
-  - fhir resource   both change the same FHIR resource's services, controllers or routes;
+concept without needing to share a file, where git and the checks in repo_audit.py see nothing. Anchors, each
+switched on by the profile's "anchors":
+  - resource        both change the same domain resource's services, controllers or routes (OpenEMR: FHIR);
   - table           both write the same table, or one writes it and the other reads it;
-  - route family    both add routes under the same /api/<x> or /fhir/<X>;
+  - route family    both add routes under the same family;
   - behaviour       one changes a method and the other adds calls to it.
-Access-control code, PRs labelled Security or ACL & Permissions, and PRs over the mass limit are left out.
+Paths, classes and methods matching the profile's "left_out_re", PRs with its "skip_labels", and PRs over the mass
+limit are left out.
 Reads the audit's caches and git objects as text; runs nothing from any PR.
 
-    python3 -I semantic_candidates.py <openemr clone> <cache dir> > candidates.json
+    WIM_PROFILE=<profile.json> python3 -I semantic_candidates.py <clone> <cache dir> [how many to read] > candidates.json
 """
 import json
+import os
 import re
 import subprocess
 import sys
@@ -19,16 +23,16 @@ from pathlib import Path
 
 REPO, C = Path(sys.argv[1]), Path(sys.argv[2])
 W = C / "audit"
-MASTER = "upstream/master"
-SKIP_LABELS = {"Security", "ACL & Permissions"}
-ACL = re.compile(r"(?i)(^gacl/|/Acl/|\bacl\b|gacl_|AclMain|AclExtended|module_acl|users_secure|^users$|^groups$|Scope|Authoriz|OAuth|OpenIDConnect|oauth2/)")
+P = json.loads(Path(os.environ["WIM_PROFILE"]).read_text())
+A = P["anchors"]
+MASTER = os.environ.get("WIM_MASTER") or f"{P['remote']}/{P['base_branch']}"
+SKIP_LABELS = set(P["skip_labels"])
+ACL = re.compile(P["left_out_re"])
 # helpers every PR calls say nothing about a shared concept
-INFRA = re.compile(r"(?i)(Logger|getLogger|get_id$|ProcessingResult|getInstance|Container|Helper|Utils?::|Trait::|translate|escape|xl$)")
-TEST = re.compile(r"^(tests/|.*/tests?/)")
-COMMON_METHODS = {"get", "set", "save", "render", "execute", "insert", "update", "delete", "search", "getAll", "getOne", "toArray",
-                  "getId", "process", "handle", "run", "create", "load", "find", "getData", "getValue", "setValue", "validate",
-                  "format", "parse", "build", "init", "setup", "getInstance", "getName", "getType", "getString", "getInt", "getBoolean",
-                  "fetch", "query", "count", "exists", "add", "remove", "getResult", "getMessage", "isValid", "hasErrors"}
+INFRA = re.compile(A["infra_re"])
+TEST = re.compile(A["test_re"])
+COMMON_METHODS = set(A["common_methods"])
+RESOURCE = A.get("resource_label") or "resource"
 
 
 def git(*args):
@@ -36,7 +40,7 @@ def git(*args):
 
 
 prs = {int(k): v for k, v in json.loads((W / "prs.json").read_text()).items()}
-symbols = json.loads((W / "symbols.json").read_text())
+symbols = json.loads((W / "symbols.json").read_text()) if (W / "symbols.json").exists() else {}
 findings = json.loads((W / "findings.json").read_text())
 meta = {p["number"]: p for p in json.loads((C / "pr-meta.json").read_text())}
 mass = {int(n) for n in findings["summary"]["mass"]}
@@ -45,23 +49,29 @@ author = {n: m["author"]["login"] for n, m in meta.items()}
 conflicting = {tuple(x["prs"]) for x in findings["text_conflict"]}
 stacked = {tuple(sorted((x["contained"], x["in"]))) for x in findings["stacked"]}
 
-RESOURCES = sorted({p.rsplit("/", 1)[-1][4:-4] for p in git("ls-tree", "--name-only", MASTER, "src/FHIR/R4/FHIRDomainResource/").split()
-                    if p.endswith(".php")}, key=len, reverse=True)
-TABLES = set(re.findall(r"CREATE TABLE(?: IF NOT EXISTS)?\s+`?(\w+)`?", git("show", f"{MASTER}:sql/database.sql"), re.I))
+# the domain's resource names, from a folder of one file per resource (OpenEMR: the generated FHIR R4 classes)
+RESOURCES = sorted({Path(p).stem[len(A.get("resource_prefix") or ""):] for p in git("ls-tree", "--name-only", MASTER, A["resources_dir"]).split()
+                    if p.endswith(A.get("resource_ext") or "")} if A.get("resources_dir") else set(), key=len, reverse=True)
+TABLES = set(re.findall(r"CREATE TABLE(?: IF NOT EXISTS)?\s+`?(\w+)`?", git("show", f"{MASTER}:{A['schema_file']}"), re.I)) \
+    if A.get("schema_file") else set()
 
 WRITE = re.compile(r"(?i)\b(?:INSERT\s+(?:IGNORE\s+)?INTO|REPLACE\s+INTO|UPDATE|DELETE\s+FROM|ALTER\s+TABLE|CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?)\s+`?(\w+)`?")
 READ = re.compile(r"(?i)\b(?:FROM|JOIN)\s+`?(\w+)`?")
-ROUTE = re.compile(r"""['"](?:GET|POST|PUT|PATCH|DELETE) /(api|fhir|portal)/(\w+)""")
+ROUTE = re.compile(A["route_re"]) if A.get("route_re") else None
+ROUTE_FILES = A.get("route_prefix") or "\0"
 CALL = re.compile(r"(?:->|::)(\w+)\s*\(")
 
 
 def resource_of(path):
-    m = re.match(r"src/Services/FHIR/(\w+)/", path)
+    """The domain resource a file belongs to: by its folder, or by a file name that starts with the resource."""
+    if not RESOURCES:
+        return None
+    m = re.match(A["resource_folder_re"], path) if A.get("resource_folder_re") else None
     if m and m.group(1) in RESOURCES:
         return m.group(1)
-    base = path.rsplit("/", 1)[-1]
-    if base.startswith("Fhir") and re.search(r"(Service|RestController|Validator|Serializer)\.php$", base):
-        return next((r for r in RESOURCES if base[4:].startswith(r)), None)
+    base, prefix = path.rsplit("/", 1)[-1], A.get("resource_file_prefix") or ""
+    if base.startswith(prefix) and A.get("resource_file_re") and re.search(A["resource_file_re"], base):
+        return next((r for r in RESOURCES if base[len(prefix):].startswith(r)), None)
     return None
 
 
@@ -91,7 +101,7 @@ for n, e in prs.items():
             continue
         r = resource_of(path)
         if r:
-            anchors[("fhir resource", r)][n].add("changes")
+            anchors[(RESOURCE, r)][n].add("changes")
     texts = {**e.get("added_by_file", {}), **e.get("name_lines", {})}
     for path, text in texts.items():
         if ACL.search(path) or TEST.match(path):
@@ -102,18 +112,18 @@ for n, e in prs.items():
         for t in READ.findall(text):
             if t in TABLES and not ACL.search(t):
                 anchors[("table", t)][n].add("reads")
-        if path.startswith("apis/routes/"):
+        if ROUTE and path.startswith(ROUTE_FILES):
             for kind, fam in ROUTE.findall(text):
                 anchors[("route family", f"/{kind}/{fam}")][n].add("adds routes")
-                if kind == "fhir" and fam in RESOURCES:
-                    anchors[("fhir resource", fam)][n].add("adds routes")
+                if kind == A.get("resource_route_kind") and fam in RESOURCES:
+                    anchors[(RESOURCE, fam)][n].add("adds routes")
     calls[n] = {path: set(CALL.findall(text)) for path, text in e.get("added_by_file", {}).items() if not TEST.match(path)}
     for cls, meth, path in changed_methods(e):
         if not ACL.search(path) and not ACL.search(cls) and not ACL.search(meth):
             anchors[("method", f"{cls}::{meth}")][n].add("changes")
 
 pairs = defaultdict(list)
-WEIGHT = {"fhir resource": 3, "route family": 2, "behaviour": 3}
+WEIGHT = {RESOURCE: 3, "route family": 2, "behaviour": 3}
 rare = lambda df: min(1.0, 3 / df)  # an anchor three PRs share says more than one forty share
 for (kind, name), by_pr in anchors.items():
     ns = sorted(by_pr)

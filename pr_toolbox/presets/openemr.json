@@ -1,34 +1,303 @@
 {
- "name": "openemr",
- "description": "OpenEMR (openemr/openemr): the database version in version.php, exact PHPStan baseline caps, and the checks its CI runs, in an openemr-cmd dev stack.",
- "version_claims": {
-  "file": "version.php",
-  "pattern": "\\$v_database = (\\d+);",
-  "related": ["version.php", "sql/database.sql", "sql/*_upgrade.sql"],
-  "bump_when": ["sql/*"],
-  "mirrors": [{"file": "sql/database.sql", "pattern": "-- v_database: (\\d+)"}],
-  "blocks": {"files": ["sql/*_upgrade.sql"], "open": "^#If", "close": "^#EndIf"},
-  "noun": "`v_database`"
- },
- "exact_caps": {
-  "file": ".phpstan/fatal-baseline-caps.php",
-  "block": "'all' => \\[(.*?)\\]",
-  "entry": "'([\\w.]+\\.php)' => (\\d+)",
-  "counted": ".phpstan/baseline/{name}",
-  "marker": "$ignoreErrors[] = [",
-  "noun": "PHPStan cap"
- },
- "health_ignore": "^(codecov/.*|All Checks Passed)$",
- "container": {"app_dir": "/var/www/localhost/htdocs/openemr"},
- "codespell_exclude": [".phpstan/*"],
- "check_steps": [
-  {"name": "php-lint", "where": "container", "each": "*.php", "run": "php -l {file}"},
-  {"name": "phpcs", "where": "container", "files": "*.php", "run": "vendor/bin/phpcs --standard=phpcs.xml.dist -q --report=summary {files}"},
-  {"name": "rector", "where": "container", "files": "*.php", "run": "vendor/bin/rector process --dry-run --no-progress-bar {files}", "fail_pattern": "would have (been )?changed|\\d+ files? with changes"},
-  {"name": "phpstan", "where": "container", "always": true,
-   "write": {"path": "/tmp/pr-toolbox-phpstan.neon", "content": "includes:\n  - {app_dir}/.phpstan/phpstan.ci.neon\nparameters:\n  parallel:\n    maximumNumberOfProcesses: {workers}\n"},
-   "run": "php -d memory_limit=8G vendor/bin/phpstan --memory-limit=8G analyze -c /tmp/pr-toolbox-phpstan.neon --error-format=raw --no-progress", "timeout": 3600},
-  {"name": "tests-isolated", "where": "container", "each": "tests/Tests/Isolated/*Test.php", "run": "vendor/bin/phpunit -c phpunit-isolated.xml {file}", "timeout": 3600},
-  {"name": "tests", "where": "container", "each": "tests/Tests/*Test.php", "exclude": ["tests/Tests/Isolated/*"], "run": "vendor/bin/phpunit -c phpunit.xml {file}", "timeout": 3600}
- ]
+  "name": "openemr",
+  "description": "OpenEMR (openemr/openemr): the database version in version.php, exact PHPStan baseline caps, and the checks its CI runs, in an openemr-cmd dev stack.",
+  "version_claims": {
+    "file": "version.php",
+    "pattern": "\\$v_database = (\\d+);",
+    "related": [
+      "version.php",
+      "sql/database.sql",
+      "sql/*_upgrade.sql"
+    ],
+    "bump_when": [
+      "sql/*"
+    ],
+    "mirrors": [
+      {
+        "file": "sql/database.sql",
+        "pattern": "-- v_database: (\\d+)"
+      }
+    ],
+    "blocks": {
+      "files": [
+        "sql/*_upgrade.sql"
+      ],
+      "open": "^#If",
+      "close": "^#EndIf"
+    },
+    "noun": "`v_database`"
+  },
+  "exact_caps": {
+    "file": ".phpstan/fatal-baseline-caps.php",
+    "block": "'all' => \\[(.*?)\\]",
+    "entry": "'([\\w.]+\\.php)' => (\\d+)",
+    "counted": ".phpstan/baseline/{name}",
+    "marker": "$ignoreErrors[] = [",
+    "noun": "PHPStan cap"
+  },
+  "health_ignore": "^(codecov/.*|All Checks Passed)$",
+  "container": {
+    "app_dir": "/var/www/localhost/htdocs/openemr"
+  },
+  "codespell_exclude": [
+    ".phpstan/*"
+  ],
+  "check_steps": [
+    {
+      "name": "php-lint",
+      "where": "container",
+      "each": "*.php",
+      "run": "php -l {file}"
+    },
+    {
+      "name": "phpcs",
+      "where": "container",
+      "files": "*.php",
+      "run": "vendor/bin/phpcs --standard=phpcs.xml.dist -q --report=summary {files}"
+    },
+    {
+      "name": "rector",
+      "where": "container",
+      "files": "*.php",
+      "run": "vendor/bin/rector process --dry-run --no-progress-bar {files}",
+      "fail_pattern": "would have (been )?changed|\\d+ files? with changes"
+    },
+    {
+      "name": "phpstan",
+      "where": "container",
+      "always": true,
+      "write": {
+        "path": "/tmp/pr-toolbox-phpstan.neon",
+        "content": "includes:\n  - {app_dir}/.phpstan/phpstan.ci.neon\nparameters:\n  parallel:\n    maximumNumberOfProcesses: {workers}\n"
+      },
+      "run": "php -d memory_limit=8G vendor/bin/phpstan --memory-limit=8G analyze -c /tmp/pr-toolbox-phpstan.neon --error-format=raw --no-progress",
+      "timeout": 3600
+    },
+    {
+      "name": "tests-isolated",
+      "where": "container",
+      "each": "tests/Tests/Isolated/*Test.php",
+      "run": "vendor/bin/phpunit -c phpunit-isolated.xml {file}",
+      "timeout": 3600
+    },
+    {
+      "name": "tests",
+      "where": "container",
+      "each": "tests/Tests/*Test.php",
+      "exclude": [
+        "tests/Tests/Isolated/*"
+      ],
+      "run": "vendor/bin/phpunit -c phpunit.xml {file}",
+      "timeout": 3600
+    }
+  ],
+  "motion": {
+    "title": "OpenEMR Work in Motion",
+    "project": "OpenEMR",
+    "mass_files": 150,
+    "mechanical": "^(version\\.php|sql/database\\.sql|sql/[0-9_]+-to-[0-9_]+_upgrade\\.sql|\\.phpstan/.*)$",
+    "mechanical_note": "version.php, the SQL install and upgrade scripts, and PHPStan's baseline and caps",
+    "release_tags": {
+      "pattern": "^v(\\d+)_(\\d+)_0$",
+      "count": 5
+    },
+    "skip_labels": [
+      "Security",
+      "ACL & Permissions"
+    ],
+    "placeholder_issues": [
+      123,
+      12345
+    ],
+    "left_out_paths": [
+      "gacl/"
+    ],
+    "left_out_re": "(?i)(^gacl/|/Acl/|\\bacl\\b|gacl_|AclMain|AclExtended|module_acl|users_secure|^users$|^groups$|Scope|Authoriz|OAuth|OpenIDConnect|oauth2/)",
+    "left_out_note": "the phpGACL access-control code",
+    "maintainer_roles": [
+      "OWNER",
+      "MEMBER"
+    ],
+    "bots": "(\\[bot\\]$|-bot$|^coderabbitai$|^github-advanced-security$|^copilot-pull-request-reviewer$|^openemr-devops-auto-merge$|^openemr-release-bot$|^dependabot$)",
+    "code_files": [
+      "*.php",
+      ":!vendor",
+      ":!tests",
+      ":!.phpstan",
+      ":!*/vendor/*"
+    ],
+    "diff_files": [
+      "*.php",
+      ":!tests",
+      ":!.phpstan"
+    ],
+    "symbols": "php",
+    "php_image": "php:8.3-cli",
+    "name_paths": [
+      "sql",
+      "apis/routes",
+      "library/globals.inc.php",
+      "src/Events",
+      "interface/main/tabs/menu"
+    ],
+    "names": [
+      {
+        "kind": "route",
+        "where": {
+          "prefix": "apis/routes/"
+        },
+        "pattern": "['\"]((?:GET|POST|PUT|PATCH|DELETE) /(?:api|fhir|portal)/[^'\"]*)['\"]",
+        "params": ":[A-Za-z_]+"
+      },
+      {
+        "kind": "table",
+        "where": {
+          "suffix": ".sql"
+        },
+        "pattern": "CREATE TABLE(?: IF NOT EXISTS)?\\s+`?([A-Za-z0-9_]+)`?",
+        "flags": "i"
+      },
+      {
+        "kind": "upgrade column",
+        "where": {
+          "suffix": ".sql"
+        },
+        "pattern": "#IfMissingColumn\\s+([A-Za-z0-9_]+)\\s+([A-Za-z0-9_]+)",
+        "format": "{0}.{1}"
+      },
+      {
+        "kind": "list id",
+        "where": {
+          "suffix": ".sql"
+        },
+        "pattern": "#IfNotRow2D\\s+list_options\\s+list_id\\s+lists\\s+option_id\\s+([A-Za-z0-9_]+)"
+      },
+      {
+        "kind": "global setting",
+        "where": {
+          "equals": "library/globals.inc.php"
+        },
+        "pattern": "^\\s*['\"]([a-z][a-z0-9_]{3,})['\"]\\s*=>\\s*\\["
+      },
+      {
+        "kind": "menu id",
+        "where": {
+          "suffix": ".json",
+          "contains": "menu"
+        },
+        "pattern": "\"menu_id\"\\s*:\\s*\"([^\"]+)\""
+      },
+      {
+        "kind": "event name",
+        "where": {
+          "prefix": "src/Events/"
+        },
+        "pattern": "const\\s+[A-Z_]+\\s*=\\s*['\"]([a-z][a-z0-9_.-]{3,})['\"]"
+      }
+    ],
+    "no_bump_re": "^sql/.*_upgrade\\.sql$",
+    "upgrade_files": {
+      "pattern": "^sql/[0-9_]+-to-[0-9_]+_upgrade\\.sql$",
+      "version_file": "version.php",
+      "version_re": "\\$v_{part}\\s*=\\s*'(\\d+)'",
+      "parts": [
+        "major",
+        "minor",
+        "patch"
+      ],
+      "join": "_",
+      "current": "-to-{version}_upgrade.sql",
+      "glob": "sql/*-to-{version}_upgrade.sql"
+    },
+    "anchors": {
+      "resource_label": "fhir resource",
+      "resources_dir": "src/FHIR/R4/FHIRDomainResource/",
+      "resource_prefix": "FHIR",
+      "resource_folder_re": "^src/Services/FHIR/(\\w+)/",
+      "resource_file_prefix": "Fhir",
+      "resource_file_re": "(Service|RestController|Validator|Serializer)\\.php$",
+      "route_re": "['\"](?:GET|POST|PUT|PATCH|DELETE) /(api|fhir|portal)/(\\w+)",
+      "resource_route_kind": "fhir",
+      "schema_file": "sql/database.sql",
+      "test_re": "^(tests/|.*/tests?/)",
+      "infra_re": "(?i)(Logger|getLogger|get_id$|ProcessingResult|getInstance|Container|Helper|Utils?::|Trait::|translate|escape|xl$)",
+      "common_methods": [
+        "get",
+        "set",
+        "save",
+        "render",
+        "execute",
+        "insert",
+        "update",
+        "delete",
+        "search",
+        "getAll",
+        "getOne",
+        "toArray",
+        "getId",
+        "process",
+        "handle",
+        "run",
+        "create",
+        "load",
+        "find",
+        "getData",
+        "getValue",
+        "setValue",
+        "validate",
+        "format",
+        "parse",
+        "build",
+        "init",
+        "setup",
+        "getInstance",
+        "getName",
+        "getType",
+        "getString",
+        "getInt",
+        "getBoolean",
+        "fetch",
+        "query",
+        "count",
+        "exists",
+        "add",
+        "remove",
+        "getResult",
+        "getMessage",
+        "isValid",
+        "hasErrors"
+      ],
+      "route_prefix": "apis/routes/",
+      "resource_ext": ".php"
+    },
+    "invited_labels": [
+      "help-wanted",
+      "good first issue",
+      "up for grabs demo",
+      "Mentored Item"
+    ],
+    "streams": "openemr-motion-streams.json",
+    "controls": "openemr-motion-controls.json",
+    "method_notes": [
+      "Two pairs whose clash the computed checks had already found were read without being told, and both came back as clashes. A third, #10926 and #14708, which an earlier audit had called a clash, came back \"no\"; checking by hand showed the reading right (master has had those writes since #13281), and the earlier claim was corrected in public."
+    ],
+    "reach_files": [
+      "*.php",
+      ":!vendor",
+      ":!*/vendor/*",
+      ":!.phpstan"
+    ],
+    "release_symbols": {
+      "functions": [
+        "library/*.php",
+        "interface/*.php",
+        ":!vendor"
+      ],
+      "classes": [
+        "src/*.php"
+      ],
+      "pages_re": "^(interface|portal|library/ajax)/.*\\.php$",
+      "pages_skip": "/modules/zend_modules/"
+    }
+  }
 }

@@ -1,5 +1,7 @@
 <?php
 
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 /**
  * The symbols in PHP files, by PHP's own tokenizer: for each file, its namespace, its classes, interfaces,
  * traits and enums (with what they extend and implement, and whether abstract), each one's methods (name,

@@ -1,39 +1,44 @@
-"""Repository-wide conflict audit of every open openemr/openemr PR against the others and master: the pairs that
-conflict as text, and the pairs that merge cleanly but meet in the code:
-  - text conflict: B merged onto (master + A) conflicts, split into mechanical files (version.php, the SQL
-    install and upgrade scripts, PHPStan's baseline and caps) and code;
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""Repository-wide conflict audit of every open PR against the others and the base branch ("master" below): the
+pairs that conflict as text, and the pairs that merge cleanly but meet in the code:
+  - text conflict: B merged onto (master + A) conflicts, split into mechanical files (the profile's "mechanical":
+    version files, migrations, lint baselines) and code;
   - deleted, still changed: one deletes or moves a file the other changes;
   - same method: both change the same method without a text conflict;
   - removed, still used: one removes a function, class or method that master defines nowhere else, and the
     other's added lines call it;
   - signature: one changes a method's signature, and a class extending or implementing that class overrides it
-    with a signature PHP would refuse, in another PR or on master in a file the first PR doesn't update;
-  - shared names: both add the same route, table, upgrade column, list id, global setting, menu id or event name.
+    with a signature PHP would refuse, in another PR or on master in a file the first PR doesn't update
+    (PHP only: the profile's "symbols");
+  - shared names: both add the same name of a kind the profile lists (routes, tables, settings, events...).
 It also lists, per PR, what a contributor building on master should know is in motion: base-class contracts
 changed, public symbols removed, files moved or deleted. PRs touching more than MASS files (mass refactors,
 regenerated code) are listed apart, since they meet everything.
 
 Reads git objects and patches as text; runs nothing from them. Each PR's head must be fetched as refs/pr/<n>.
 
-    python3 -I repo_audit.py <openemr clone> <work dir> <pr list file: "number base" per line>
+    WIM_PROFILE=<profile.json> python3 -I repo_audit.py <clone> <work dir> <pr list file: "number base" per line>
 """
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from collections import defaultdict
 from itertools import combinations
 from pathlib import Path
 
-sys.path.insert(0, str(Path.home() / "dev/pr-toolbox"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from pr_toolbox.common import caps_mismatches, conflicted_files, merged, version_claim  # noqa: E402
+
+P = json.loads(Path(os.environ["WIM_PROFILE"]).read_text())
 
 REPO, W = Path(sys.argv[1]), Path(sys.argv[2])
 NUMBERS = [int(l.split()[0]) for l in Path(sys.argv[3]).read_text().split("\n") if l.strip()]
-MASS = 150
-MASTER = os.environ.get("WIM_MASTER", "upstream/master")  # pin a master, e.g. to replay a build
-MECHANICAL = re.compile(r"^(version\.php|sql/database\.sql|sql/[0-9_]+-to-[0-9_]+_upgrade\.sql|\.phpstan/.*)$")
+MASS = P["mass_files"]
+MASTER = os.environ.get("WIM_MASTER") or f"{P['remote']}/{P['base_branch']}"  # WIM_MASTER pins a master, e.g. to replay a build
+MECHANICAL = re.compile(P["mechanical"])
 W.mkdir(parents=True, exist_ok=True)
 (W / "blobs").mkdir(exist_ok=True)
 
@@ -48,9 +53,9 @@ def git(*args, check=True):
 MASTER_SHA = git("rev-parse", MASTER).stdout.strip()
 
 # Names two PRs can both add are read from these paths' added lines, for every PR, large ones included.
-NAME_PATHS = ["sql", "apis/routes", "library/globals.inc.php", "src/Events", "interface/main/tabs/menu"]
-# Patterns the plan retires, counted in each PR's added and removed lines (streams.json "direction").
-STREAMS = json.loads((Path(__file__).parent / "streams.json").read_text())
+NAME_PATHS = P["name_paths"]
+# Patterns the plan retires, counted in each PR's added and removed lines (the profile's streams, "direction").
+STREAMS = P["streams"]
 DIRECTION = [d for s in STREAMS["streams"] for d in s.get("direction", [])]
 
 # --- 1. Each PR's changes, against its merge base with master; cached by the PR's head commit -------------
@@ -107,7 +112,7 @@ for n in NUMBERS:
     entry["name_lines"] = {p: "\n".join(ls) for p, ls in entry["name_lines"].items()}
     # what the PR adds and removes of each pattern the plan retires (tests and baselines aside)
     added, removed = [], []
-    for l in git("diff", "-U0", base, head, "--", "*.php", ":!tests", ":!.phpstan").stdout.splitlines():
+    for l in git("diff", "-U0", base, head, "--", *(P.get("diff_files") or P["code_files"])).stdout.splitlines():
         if l.startswith("+") and not l.startswith("+++"):
             added.append(l)
         elif l.startswith("-") and not l.startswith("---"):
@@ -127,7 +132,8 @@ mass = sorted(n for n, e in prs.items() if len(e["files"]) > MASS)
 normal = [n for n in NUMBERS if n not in mass]
 
 # --- 2. Symbols of every base and head version, by PHP's tokenizer (only blobs not read before) -----------
-blobs = {i[k] for e in prs.values() for i in e["php"].values() for k in ("base_blob", "head_blob") if k in i}
+blobs = {i[k] for e in prs.values() for i in e["php"].values() for k in ("base_blob", "head_blob") if k in i} \
+    if P["symbols"] == "php" else set()  # no symbol reader for the project's language: the symbol checks find nothing
 symfile = W / "symbols.json"
 symbols = json.loads(symfile.read_text()) if symfile.exists() else {}
 todo = [sha for sha in blobs if f"{sha}.php" not in symbols]
@@ -136,9 +142,14 @@ if todo:
     batch.mkdir(exist_ok=True)
     for sha in todo:
         (batch / f"{sha}.php").write_text(git("cat-file", "-p", sha).stdout)
-    r = subprocess.run(["docker", "run", "--rm", "--cpus", "3", "--network", "none", "-u", f"{subprocess.getoutput('id -u')}:{subprocess.getoutput('id -g')}",
-                        "-v", f"{Path(__file__).parent}:/t:ro", "-v", f"{batch}:/f:ro", "php:8.3-cli", "php", "-d", "memory_limit=2G",
-                        "/t/php_symbols.php", "/f"], capture_output=True, text=True)
+    # the pinned image when docker is there (the same tokenizer everywhere), else the local php
+    if shutil.which("docker"):
+        cmd = ["docker", "run", "--rm", "--cpus", "3", "--network", "none", "-u", f"{os.getuid()}:{os.getgid()}",
+               "-v", f"{Path(__file__).parent}:/t:ro", "-v", f"{batch}:/f:ro", P["php_image"], "php", "-d", "memory_limit=2G",
+               "/t/php_symbols.php", "/f"]
+    else:
+        cmd = ["php", "-d", "memory_limit=2G", str(Path(__file__).parent / "php_symbols.php"), str(batch)]
+    r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode:
         raise SystemExit(f"php_symbols.php failed: {r.stderr[:300]}")
     symbols.update(json.loads(r.stdout))
@@ -260,8 +271,7 @@ for n in normal:
             removed[n].add((kind, name, path))
 
 # --- 3. Each PR onto master, then pairs; cached by master and the PRs' head commits ---------------------
-PRESET = json.loads((Path.home() / "dev/pr-toolbox/pr_toolbox/presets/openemr.json").read_text())
-VRULE, CRULE = PRESET["version_claims"], PRESET["exact_caps"]
+VRULE, CRULE = P.get("version_claims"), P.get("exact_caps")  # the profile's rules; either may be absent
 
 
 def alive(commit):
@@ -270,6 +280,8 @@ def alive(commit):
 
 
 def caps(ref):
+    if not CRULE:
+        return set()
     try:
         return set(caps_mismatches(REPO, ref, CRULE))
     except Exception as e:  # a tree whose caps file can't be read is reported, not taken as clean
@@ -339,7 +351,8 @@ for t, ns in by_unit.items():
 
 # PHPStan's exact caps: each PR merged onto master alone, then clean pairs that both touch the caps or baselines
 MASTER_CAPS = caps(MASTER_SHA)
-touches_caps = {n for n in normal if any(f == CRULE["file"] or f.startswith(".phpstan/baseline/") for f in prs[n]["files"])}
+CAPS_DIR = CRULE["counted"].split("{name}")[0] if CRULE else None
+touches_caps = {n for n in normal if CRULE and any(f == CRULE["file"] or f.startswith(CAPS_DIR) for f in prs[n]["files"])}
 for n in sorted(touches_caps):
     if onto[n]:
         bad = sorted(caps(current_commit(n)) - MASTER_CAPS)
@@ -387,30 +400,34 @@ for key, v in pairs["pairs"].items():
         findings["caps_pairs"].append({"prs": [a, b], "caps": v["caps"]})
 
 # v_database: the number each PR's head claims, when it changes it; PRs changing SQL without changing it
-master_claim = version_claim(REPO, MASTER_SHA, VRULE)
+master_claim = version_claim(REPO, MASTER_SHA, VRULE) if VRULE else None
 claims, no_bump = {}, []
-for n in NUMBERS:
+NO_BUMP = re.compile(P["no_bump_re"]) if P.get("no_bump_re") else None
+for n in NUMBERS if VRULE else []:
     head_claim, base_claim = version_claim(REPO, f"refs/pr/{n}", VRULE), version_claim(REPO, prs[n]["base"], VRULE)
     if head_claim is not None and head_claim != base_claim:
         claims[n] = head_claim
-    elif any(re.match(r"sql/.*_upgrade\.sql$", f) for f in prs[n]["files"]):
+    elif NO_BUMP and any(NO_BUMP.match(f) for f in prs[n]["files"]):
         no_bump.append(n)
 by_claim = defaultdict(list)
 for n, c in claims.items():
     by_claim[c].append(n)
 findings["version_claims"] = {"master": master_claim, "claims": claims, "no_bump": sorted(no_bump),
                               "shared": {c: sorted(ns) for c, ns in by_claim.items() if len(ns) > 1},
-                              "taken": sorted(n for n, c in claims.items() if c <= master_claim)}
+                              "taken": sorted(n for n, c in claims.items() if master_claim is not None and c <= master_claim)}
 # SQL changed in an earlier release's upgrade file: only sites upgrading from before that release run it (right for
 # a fix to the old upgrade path; a change every site needs also belongs in the current file)
-vphp = git("show", f"{MASTER_SHA}:version.php").stdout
-target = "_".join(re.search(rf"\$v_{k}\s*=\s*'(\d+)'", vphp).group(1) for k in ("major", "minor", "patch"))
-findings["stale_upgrade"] = {"current": f"sql/*-to-{target}_upgrade.sql", "prs": {}}
-for n in NUMBERS:
-    stale = sorted(p for p, f in prs[n]["files"].items() if f["status"] in "MA" and re.match(r"sql/[0-9_]+-to-[0-9_]+_upgrade\.sql$", p)
-                   and not p.endswith(f"-to-{target}_upgrade.sql"))
-    if stale:
-        findings["stale_upgrade"]["prs"][n] = stale
+UF = P.get("upgrade_files")
+findings["stale_upgrade"] = {"current": None, "prs": {}}
+if UF:
+    vfile = git("show", f"{MASTER_SHA}:{UF['version_file']}").stdout
+    target = UF["join"].join(re.search(UF["version_re"].replace("{part}", k), vfile).group(1) for k in UF["parts"])
+    findings["stale_upgrade"]["current"] = UF["glob"].replace("{version}", target)
+    for n in NUMBERS:
+        stale = sorted(p for p, f in prs[n]["files"].items() if f["status"] in "MA" and re.match(UF["pattern"], p)
+                       and not p.endswith(UF["current"].replace("{version}", target)))
+        if stale:
+            findings["stale_upgrade"]["prs"][n] = stale
 conflicts = {tuple(int(x.split(":")[0]) for x in k.split(",")): v for k, v in pairs["pairs"].items()}
 
 for (a, b), v in sorted(conflicts.items()):
@@ -495,7 +512,7 @@ for a in normal:
                 continue
             where = []
             for p, text in prs[b].get("added_by_file", {}).items():
-                if p in a_deleted or p.startswith(".phpstan/") or short not in text or not pat.search(text):
+                if p in a_deleted or MECHANICAL.match(p) or short not in text or not pat.search(text):
                     continue
                 # a method call counts only where the file names the class (an import, a type, a static call)
                 if cls_short and not re.search(rf"\b{re.escape(cls_short)}\b", git("show", f"refs/pr/{b}:{p}").stdout):
@@ -546,17 +563,27 @@ for a in normal:
                     findings["signature_vs_master"].append({"changes": a, "method": f"{cls}::{meth}", "new": new,
                                                             "master_file": pp, "override": sig, "why": why})
 
-# shared names (routes, tables, columns, lists, globals, menu ids, events), from the GitHub patches cached by prs.py
-ROUTE = re.compile(r"""['"]((?:GET|POST|PUT|PATCH|DELETE) /(?:api|fhir|portal)/[^'"]*)['"]""")
-KINDS = {
-    "route": lambda f, l: [re.sub(r":[A-Za-z_]+", ":param", m) for m in ROUTE.findall(l)] if f.startswith("apis/routes/") else [],
-    "table": lambda f, l: re.findall(r"CREATE TABLE(?: IF NOT EXISTS)?\s+`?([A-Za-z0-9_]+)`?", l, re.I) if f.endswith(".sql") else [],
-    "upgrade column": lambda f, l: [f"{a}.{b}" for a, b in re.findall(r"#IfMissingColumn\s+([A-Za-z0-9_]+)\s+([A-Za-z0-9_]+)", l)] if f.endswith(".sql") else [],
-    "list id": lambda f, l: re.findall(r"#IfNotRow2D\s+list_options\s+list_id\s+lists\s+option_id\s+([A-Za-z0-9_]+)", l) if f.endswith(".sql") else [],
-    "global setting": lambda f, l: re.findall(r"""^\s*['"]([a-z][a-z0-9_]{3,})['"]\s*=>\s*\[""", l) if f == "library/globals.inc.php" else [],
-    "menu id": lambda f, l: re.findall(r""""menu_id"\s*:\s*"([^"]+)\"""", l) if f.endswith(".json") and "menu" in f else [],
-    "event name": lambda f, l: re.findall(r"""const\s+[A-Z_]+\s*=\s*['"]([a-z][a-z0-9_.-]{3,})['"]""", l) if f.startswith("src/Events/") else [],
-}
+# shared names, of the kinds the profile lists, from every PR's added lines in its name paths
+
+
+def name_kind(spec):
+    """A profile name kind as a function (path, line) -> names."""
+    rx = re.compile(spec["pattern"], re.I if "i" in spec.get("flags", "") else 0)
+    where, fmt, params = spec.get("where", {}), spec.get("format"), spec.get("params")
+
+    def fn(f, l):
+        if ("prefix" in where and not f.startswith(where["prefix"])) or ("suffix" in where and not f.endswith(where["suffix"])) \
+                or ("equals" in where and f != where["equals"]) or ("contains" in where and where["contains"] not in f):
+            return []
+        out = []
+        for m in rx.findall(l):
+            v = fmt.format(*m) if fmt else (m if isinstance(m, str) else m[0])
+            out.append(re.sub(params, ":param", v) if params else v)
+        return out
+    return fn
+
+
+KINDS = {spec["kind"]: name_kind(spec) for spec in P.get("names", [])}
 names = defaultdict(lambda: defaultdict(set))
 for n in NUMBERS:
     for path, text in prs[n]["name_lines"].items():

@@ -1,8 +1,9 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """The path forward: what is left to do in each area, cut the way its plan says to cut it, and whether each piece is
 already in an open PR, waiting on another issue, or free. Called from intent.py; reads master's tree and the plan
 issues, and writes nothing itself.
 
-Kinds of to-do, per streams.json:
+Kinds of to-do, per the profile's streams:
   batches    a retired pattern (or file type) counted on master per folder; files an open PR changes are "busy",
              files that also write a superglobal are flagged for hand work, and folders the plan names come first
   keys       OEGlobalsBag keys the sub-issues move out, with call sites on master per sub-issue
@@ -13,12 +14,14 @@ import re
 import subprocess
 from collections import defaultdict
 
-SCOPE = ["*.php", ":!vendor", ":!*/vendor/*", ":!tests", ":!.phpstan"]
-INVITED = {"help-wanted", "good first issue", "up for grabs demo", "Mentored Item"}
-LEFT_OUT = ("gacl/",)  # access-control code: not listed as work to pick up
 
 
-def build(repo, master, streams, prs, per_file, mass_dirs, refs, gh_issue):
+def build(repo, master, streams, prs, per_file, mass_dirs, refs, gh_issue, profile):
+    SCOPE = profile["code_files"]
+    INVITED = set(profile["invited_labels"])
+    LEFT_OUT = tuple(profile["left_out_paths"]) or ("\0",)  # paths never listed as work to pick up
+    REACH = profile.get("reach_files") or profile["code_files"]  # where callers of a tracked file are counted
+
     def git(*args):
         return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True).stdout
 
@@ -130,9 +133,9 @@ def build(repo, master, streams, prs, per_file, mass_dirs, refs, gh_issue):
                     callers = []
                     if fns:
                         pat = r"(?<![\w>:$\\])(" + "|".join(map(re.escape, fns)) + r")\s*\("
-                        callers = [p.split(":", 1)[1] for p in git("grep", "-l", "-P", pat, master, "--", "*.php", ":!vendor", ":!*/vendor/*", ":!.phpstan").splitlines()]
+                        callers = [p.split(":", 1)[1] for p in git("grep", "-l", "-P", pat, master, "--", *REACH).splitlines()]
                     # and files that include it by name, for the ones that define no functions
-                    callers += [p.split(":", 1)[1] for p in git("grep", "-lF", path.rsplit("/", 1)[-1], master, "--", "*.php", ":!vendor", ":!*/vendor/*", ":!.phpstan").splitlines()]
+                    callers += [p.split(":", 1)[1] for p in git("grep", "-lF", path.rsplit("/", 1)[-1], master, "--", *REACH).splitlines()]
                     callers = sorted(set(callers))
                     changing = sorted(n for n in per_file.get(path, ()) if n in prs)
                     rows.append({"path": path, "functions": len(fns), "callers": len([c for c in callers if c != path]),

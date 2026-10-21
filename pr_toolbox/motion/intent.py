@@ -1,8 +1,10 @@
-"""The work-in-motion map: what OpenEMR's maintainers plan for each area of the code, which open PRs are changing
-it, what each release removed, and what merging any open PR does to the others. Reads streams.json (the
-hand-written judgement), repo_audit.py's findings, and GitHub's issue and PR records; writes map.json and the page.
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""The work-in-motion map: what a project's maintainers plan for each area of the code (the profile's streams,
+quoted from their own documents), which open PRs are changing it, what each release removed, and what merging any
+open PR does to the others. Reads the profile, repo_audit.py's findings, and GitHub's issue and PR records; writes
+map.json and the page.
 
-    python3 -I intent.py <openemr clone> <audit work dir> <github cache dir> <page template> <page out>
+    WIM_PROFILE=<profile.json> python3 -I intent.py <clone> <audit work dir> <cache dir> <page template> <page out>
 
 Reads git objects and GitHub records as text; runs nothing from them.
 """
@@ -13,39 +15,51 @@ import subprocess
 import sys
 from collections import Counter, defaultdict
 from datetime import date
+from html import escape as html_escape
 from pathlib import Path
 
 REPO, W, G, TEMPLATE, OUT = (Path(a) for a in sys.argv[1:6])
 HERE = Path(__file__).parent
-MASTER = "upstream/master"
-TAGS = ["v8_0_0", "v8_1_0", "v8_2_0", "v8_3_0", "v8_4_0", MASTER]
-SKIP_LABELS = {"Security", "ACL & Permissions"}
-PLACEHOLDER_ISSUES = {123, 12345}  # the PR template's "Fixes #12345" example, left in many bodies
-MECHANICAL = re.compile(r"^(version\.php|sql/database\.sql|sql/[0-9_]+-to-[0-9_]+_upgrade\.sql|\.phpstan/.*)$")
+P = json.loads(Path(os.environ["WIM_PROFILE"]).read_text())
+MASTER = os.environ.get("WIM_MASTER") or f"{P['remote']}/{P['base_branch']}"
+SKIP_LABELS = set(P["skip_labels"])
+PLACEHOLDER_ISSUES = set(P["placeholder_issues"])  # e.g. a PR template's "Fixes #12345" example, left in many bodies
+MECHANICAL = re.compile(P["mechanical"])
+GH = re.escape(P["github"])
 
 
 def git(*args):
     return subprocess.run(["git", "-C", str(REPO), *args], capture_output=True, text=True).stdout
 
 
+def release_tags():
+    """The last N release tags matching the profile's pattern, oldest first, by their version numbers."""
+    rx = re.compile(P["release_tags"]["pattern"])
+    found = [(tuple(int(x) for x in m.groups()), t) for t in git("tag", "-l").split() if (m := rx.match(t))]
+    return [t for _, t in sorted(found)[-P["release_tags"]["count"]:]]
+
+
+TAGS = release_tags() + [MASTER]
+
+
 def gh_issue(n):
     f = G / "issues" / f"{n}.json"
     if not f.exists():
-        out = subprocess.run(["gh", "api", f"repos/openemr/openemr/issues/{n}", "--jq",
+        out = subprocess.run(["gh", "api", f"repos/{P['github']}/issues/{n}", "--jq",
                               "{number,title,state,user:.user.login,updated_at,labels:[.labels[].name],body,comments,pr:(.pull_request!=null)}"],
                              capture_output=True, text=True).stdout
         f.write_text(out or "{}")
     return json.loads(f.read_text() or "{}")
 
 
-streams = json.loads((HERE / "streams.json").read_text())
+streams = P["streams"]
 findings = json.loads((W / "findings.json").read_text())
 prs_git = {int(k): v for k, v in json.loads((W / "prs.json").read_text()).items()}
 meta = {p["number"]: p for p in json.loads((G / "pr-meta.json").read_text())}
 bodies = {p["number"]: p for p in json.loads((G / "pr-bodies.json").read_text())}
 extra = {int(k): v for k, v in json.loads((G / "pr-extra.json").read_text()).items()}
-MAINTAINER_ROLES = {"OWNER", "MEMBER"}
-BOT = re.compile(r"(\[bot\]$|-bot$|^coderabbitai$|^github-advanced-security$|^copilot-pull-request-reviewer$|^openemr-devops-auto-merge$|^openemr-release-bot$|^dependabot$)")
+MAINTAINER_ROLES = set(P["maintainer_roles"])
+BOT = re.compile(P["bots"])
 mergers = json.loads((G / "mergers.json").read_text())
 MAINTAINERS = {login for login in mergers if not BOT.search(login)}
 is_maint = lambda login, role: not BOT.search(login) and (login in MAINTAINERS or role in MAINTAINER_ROLES)
@@ -66,11 +80,11 @@ def _norm(t):
 
 
 def quote_source(url):
-    m = re.match(r"https://github\.com/openemr/openemr/(?:issues|pull)/(\d+)", url or "")
+    m = re.match(rf"https://github\.com/{GH}/(?:issues|pull)/(\d+)", url or "")
     if m:
         i = gh_issue(int(m.group(1)))
         return (i.get("title") or "") + "\n\n" + (i.get("body") or "")
-    m = re.match(r"https://github\.com/openemr/openemr/blob/master/([^#]+)", url or "")
+    m = re.match(rf"https://github\.com/{GH}/blob/{re.escape(P['base_branch'])}/([^#]+)", url or "")
     if m:
         return git("show", f"{MASTER}:{m.group(1)}")
     return None
@@ -107,11 +121,11 @@ tag_info = {}
 for t in TAGS:
     sha = git("rev-parse", t).strip()
     when = git("log", "-1", "--format=%cs", t).strip() if t != MASTER else str(date.today())
-    tag_info[t] = {"name": "master" if t == MASTER else t.replace("v", "").replace("_", "."), "sha": sha[:10], "date": when}
+    tag_info[t] = {"name": P["base_branch"] if t == MASTER else re.sub(r"^v", "", t).replace("_", "."), "sha": sha[:10], "date": when}
 
 cache_f = W / "measures.json"
 cache = json.loads(cache_f.read_text()) if cache_f.exists() else {}
-PHP_SCOPE = ["*.php", ":!vendor", ":!tests", ":!.phpstan", ":!*/vendor/*"]
+PHP_SCOPE = P["code_files"]
 
 
 def measure(m, tagsha):
@@ -131,10 +145,14 @@ def measure(m, tagsha):
     return v
 
 
+RS = P.get("release_symbols") or {}  # where each release's global functions, classes and pages are listed (PHP)
+
+
 def symbols_at(tagsha):
     fns = {re.sub(r"^function\s+&?([A-Za-z0-9_]+).*", r"\1", l) for l in
-           git("grep", "-hE", r"^function\s+&?[A-Za-z_][A-Za-z0-9_]*\s*\(", tagsha, "--", "library/*.php", "interface/*.php", ":!vendor").splitlines()}
-    classes = {p.split(":", 1)[1] for p in git("grep", "-lE", r"^(final |abstract |readonly )*(class|interface|trait|enum) ", tagsha, "--", "src/*.php").splitlines()}
+           git("grep", "-hE", r"^function\s+&?[A-Za-z_][A-Za-z0-9_]*\s*\(", tagsha, "--", *RS["functions"]).splitlines()} if RS.get("functions") else set()
+    classes = {p.split(":", 1)[1] for p in git("grep", "-lE", r"^(final |abstract |readonly )*(class|interface|trait|enum) ", tagsha, "--",
+                                                *RS["classes"]).splitlines()} if RS.get("classes") else set()
     return fns, classes
 
 
@@ -146,7 +164,7 @@ for t in TAGS:
         pt, pf, pc = prev
         deleted = [p for p in git("diff", "--diff-filter=D", "--name-only", pt, t, "--", ".", ":!vendor", ":!tests", ":!.phpstan").splitlines()]
         by_dir = Counter("/".join(p.split("/")[:3]) if p.count("/") >= 3 else "/".join(p.split("/")[:-1]) or "(root)" for p in deleted)
-        pages = sorted(p for p in deleted if re.match(r"^(interface|portal|library/ajax)/.*\.php$", p) and "/modules/zend_modules/" not in p)
+        pages = sorted(p for p in deleted if RS.get("pages_re") and re.match(RS["pages_re"], p) and not (RS.get("pages_skip") and RS["pages_skip"] in p))
         releases.append({"from": tag_info[pt]["name"], "to": tag_info[t]["name"], "date": tag_info[t]["date"],
                          "functions_removed": sorted(pf - fns), "functions_added": len(fns - pf),
                          "classes_removed": sorted(pc - classes), "classes_added": len(classes - pc),
@@ -158,8 +176,8 @@ pr_files = {n: sorted(e["files"]) for n, e in prs_git.items()}
 refs = {}
 for n, b in bodies.items():
     text = b.get("body") or ""
-    fixes = {int(x) for x in re.findall(r"(?i)\b(?:fix(?:e[sd])?|close[sd]?|resolve[sd]?)\s*:?\s+(?:https://github\.com/openemr/openemr/issues/|#)(\d+)", text)}
-    mentions = {int(x) for x in re.findall(r"(?:openemr/openemr/(?:issues|pull)/|#)(\d{3,5})\b", text)}
+    fixes = {int(x) for x in re.findall(rf"(?i)\b(?:fix(?:e[sd])?|close[sd]?|resolve[sd]?)\s*:?\s+(?:https://github\.com/{GH}/issues/|#)(\d+)", text)}
+    mentions = {int(x) for x in re.findall(rf"(?:{GH}/(?:issues|pull)/|#)(\d{{3,5}})\b", text)}
     fixes |= set(extra.get(n, {}).get("closing", []))
     refs[n] = {"fixes": sorted(fixes - PLACEHOLDER_ISSUES), "mentions": sorted(mentions - PLACEHOLDER_ISSUES - {n})}
 
@@ -342,7 +360,7 @@ data = {
               "conflict_pairs_code": sum(1 for x in findings["text_conflict"] if x["code"]),
               "conflict_pairs_mechanical": sum(1 for x in findings["text_conflict"] if not x["code"]),
               "mechanical_files": mech, "impact": impact,
-              "baseline_deletion": [{"deletes": x["deletes"], "changed_by": x["changes"]} for x in findings["deleted_changed"] if x["mechanical"]],
+              "baseline_deletion": [{"deletes": x["deletes"], "changed_by": x["changes"], "file": x["files"][0]} for x in findings["deleted_changed"] if x["mechanical"]],
               "version": {"master": vc["master"], "shared": vc["shared"], "taken": vc["taken"], "no_bump": vc["no_bump"]},
               "caps_alone": findings["caps_alone"], "caps_pairs": findings["caps_pairs"],
               "stale_upgrade": findings.get("stale_upgrade", {})},
@@ -357,10 +375,17 @@ data = {
 sys.path.insert(0, str(HERE))
 import todos  # noqa: E402
 data["path"] = {
-    "todos": todos.build(REPO, master_sha, streams, prs_out, per_file, data["mass_dirs"], refs, gh_issue),
+    "todos": todos.build(REPO, master_sha, streams, prs_out, per_file, data["mass_dirs"], refs, gh_issue, P),
     "rebase_mechanical": sorted(n for n in needs_rebase if master_conf.get(n) and all(MECHANICAL.match(f) for f in master_conf[n])),
 }
 data["maintainers"] = [{"login": k, "merged": v} for k, v in mergers.items() if k in MAINTAINERS]
+data["profile"] = {k: P.get(k) for k in ("title", "project", "github", "base_branch", "mechanical_note", "left_out_note", "method_notes", "symbols")}
+data["profile"]["version_noun"] = (P.get("version_claims") or {}).get("noun", "version number").strip("`")
+data["profile"]["caps_noun"] = (P.get("exact_caps") or {}).get("noun", "lint cap")
+data["profile"]["caps_file"] = (P.get("exact_caps") or {}).get("file")
+data["profile"]["version_file"] = (P.get("version_claims") or {}).get("file")
+data["profile"]["resource_label"] = P["anchors"].get("resource_label")
+data["general_heading"] = streams.get("general_heading")
 data["controls"] = json.loads((W / "controls-result.json").read_text()) if (W / "controls-result.json").exists() else []
 
 # --- semantic readings (judgement): pairs read by agents from the packets, each checked by a second reading ---
@@ -388,7 +413,12 @@ if (SEM / "verdicts").is_dir():
                         "read_at": heads_then.get("read_at", "")[:10]}
 
 (W / "map.json").write_text(json.dumps(data))
-page = TEMPLATE.read_text().replace("/*MAP_DATA*/null", json.dumps(data, separators=(",", ":")).replace("</", "<\\/"))
+fill = {"%%TITLE%%": P["title"], "%%GITHUB%%": P["github"], "%%PROJECT%%": P["project"], "%%BASE%%": P["base_branch"],
+        "%%MECH%%": P["mechanical_note"]}
+page = TEMPLATE.read_text()
+for k, v in fill.items():
+    page = page.replace(k, html_escape(v))
+page = page.replace("/*MAP_DATA*/null", json.dumps(data, separators=(",", ":")).replace("</", "<\\/"))
 OUT.write_text(page)
 print(json.dumps({"streams": {s["id"]: {"plan": len(s["plan"]), "inflight": len(s["inflight"]), "measures": [m["by_release"][-1]["value"] if "by_release" in m else m["checklist"] for m in s["measures"]]} for s in out_streams},
                   "releases": [(r["to"], len(r["functions_removed"]), len(r["classes_removed"]), r["files_deleted"]) for r in releases],

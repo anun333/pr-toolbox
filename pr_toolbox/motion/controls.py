@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Checks the audit against known cases before anything is published: each control must be found (or, for an
 "absent" control, must not be). Exits non-zero when a control whose PRs are all still open comes back wrong,
 because then the check that should have found it is broken, and its zeros mean nothing.

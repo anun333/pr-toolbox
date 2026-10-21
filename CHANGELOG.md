@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.0 (2026-10-20)
+
+New command: **`pr-toolbox motion`**, a map of every open PR for the people who merge.
+
+- Every open PR merged onto the base branch, and every pair sharing a file merged on top of that; conflicts split into code and mechanical files.
+- Breaks that merge cleanly: deleted files still changed, stacked PRs, the same method changed twice, version-number and exact-cap collisions, shared names; for PHP, removed functions still called and signature changes an override would no longer satisfy.
+- The plan per area, quoted from the project's own documents and checked word for word on every build; a path forward; a triage table with a "Nothing blocking" view; evidence and reproduction commands on every PR card.
+- Controls: known cases each check must find before the page is written.
+- Incremental rebuilds when the base moves, with a self-check; `--master` to replay; `motion compare` to prove two builds agree.
+- Optional reading for semantic clashes: `motion candidates`, `motion packets`, reader instructions.
+- The OpenEMR profile gains a `motion` section.
+
+Nothing changed in `landing`, `health` or `check`.
+
 ## 0.3.0 (2026-10-19)
 
 Renamed **pr-toolbox**, since the tools work on any GitHub repository.

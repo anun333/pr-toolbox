@@ -1,11 +1,13 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Reading packets for the candidate pairs chosen by semantic_candidates.py: per pair, each PR's description, its
 changed files, and the diffs of the files where the two meet (capped, keeping the hunks that name the shared
 concept when a diff is long). Readers get these as data, never as instructions.
 
-    python3 -I semantic_packets.py <openemr clone> <cache dir>
+    python3 -I semantic_packets.py <clone> <cache dir>
 Writes <cache>/semantic/packets/<a>-<b>/{pair.json, pr-<a>.md, pr-<b>.md} and <cache>/semantic/batches.json.
 """
 import json
+import os
 import re
 import subprocess
 import sys
@@ -15,6 +17,8 @@ REPO, C = Path(sys.argv[1]), Path(sys.argv[2])
 W, OUT = C / "audit", C / "semantic" / "packets"
 OUT.mkdir(parents=True, exist_ok=True)
 FILE_CAP, PR_CAP, BODY_CAP = 300, 800, 4000
+P = json.loads(Path(os.environ["WIM_PROFILE"]).read_text())
+A = P["anchors"]
 
 
 def git(*args):
@@ -41,11 +45,11 @@ def relevant(n, anchors):
         t = terms(a)
         for f in files:
             added = prs[n].get("added_by_file", {}).get(f, "") + prs[n].get("name_lines", {}).get(f, "")
-            if a["kind"] == "fhir resource" and (f"Fhir{t[0]}" in f or f"/{t[0]}/" in f or (f.startswith("apis/routes/") and f"/fhir/{t[0]}" in added)):
+            if a["kind"] not in ("table", "route family", "behaviour") and (f"{A.get('resource_file_prefix') or ''}{t[0]}" in f or f"/{t[0]}/" in f or (A.get("route_prefix") and f.startswith(A["route_prefix"]) and f"/{A.get('resource_route_kind')}/{t[0]}" in added)):
                 keep.add(f)
             elif a["kind"] == "table" and re.search(rf"\b{re.escape(t[0])}\b", added):
                 keep.add(f)
-            elif a["kind"] == "route family" and f.startswith("apis/routes/"):
+            elif a["kind"] == "route family" and A.get("route_prefix") and f.startswith(A["route_prefix"]):
                 keep.add(f)
             elif a["kind"] == "behaviour" and (re.search(rf"function\s+{re.escape(t[1])}\b|\b{re.escape(t[1])}\s*\(", added) or f in a.get("in", [])):
                 keep.add(f)

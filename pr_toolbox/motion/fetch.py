@@ -1,13 +1,15 @@
-"""Fresh inputs for the work-in-motion map: every open openemr/openemr PR's record from GitHub (title, author, draft,
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""Fresh inputs for the work-in-motion map: every open PR's record from GitHub (title, author, draft,
 labels, body, size, the issues GitHub links as closing, reviews with each reviewer's role, and the CI state of the
 head commit), master and each PR's head fetched as refs/pr/<n>, and the plan issues named in streams.json.
 
-    python3 -I fetch.py <openemr clone> <cache dir>
+    python3 -I fetch.py <clone> <cache dir>
 
 Writes <cache>/open-prs.txt, pr-meta.json, pr-bodies.json, pr-extra.json and issues/<n>.json. Reads GitHub records
 as data; runs nothing from them.
 """
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -16,9 +18,10 @@ REPO, C = Path(sys.argv[1]), Path(sys.argv[2])
 C.mkdir(parents=True, exist_ok=True)
 (C / "issues").mkdir(exist_ok=True)
 HERE = Path(__file__).parent
+P = json.loads(Path(os.environ["WIM_PROFILE"]).read_text())
 
 QUERY = """query($cursor: String) {
-  repository(owner: "openemr", name: "openemr") { pullRequests(states: OPEN, first: 25, after: $cursor) {
+  repository(owner: "%OWNER%", name: "%NAME%") { pullRequests(states: OPEN, first: 25, after: $cursor) {
     pageInfo { hasNextPage endCursor }
     nodes { number title isDraft createdAt updatedAt baseRefName headRefOid additions deletions changedFiles body
       reviewDecision authorAssociation author { login }
@@ -26,7 +29,7 @@ QUERY = """query($cursor: String) {
       closingIssuesReferences(first: 10) { nodes { number } }
       reviews(last: 30) { nodes { author { login } authorAssociation state submittedAt } }
       comments { totalCount }
-      commits(last: 1) { nodes { commit { oid statusCheckRollup { state } } } } } } } }"""
+      commits(last: 1) { nodes { commit { oid statusCheckRollup { state } } } } } } } }""".replace("%OWNER%", P["owner"]).replace("%NAME%", P["name"])
 
 
 def run(*args, check=True):
@@ -69,10 +72,10 @@ for p in prs:
 (C / "open-prs.txt").write_text("".join(f"{p['number']} {p['baseRefName']}\n" for p in prs))
 
 # master and every open PR's head; a PR whose head can't be fetched is reported, not silently dropped
-run("git", "-C", str(REPO), "fetch", "-q", "upstream", "master")
+run("git", "-C", str(REPO), "fetch", "-q", P["remote"], P["base_branch"])
 numbers = [p["number"] for p in prs]
 for i in range(0, len(numbers), 40):
-    run("git", "-C", str(REPO), "fetch", "-q", "upstream", *[f"+refs/pull/{n}/head:refs/pr/{n}" for n in numbers[i:i + 40]])
+    run("git", "-C", str(REPO), "fetch", "-q", P["remote"], *[f"+refs/pull/{n}/head:refs/pr/{n}" for n in numbers[i:i + 40]])
 missing = [n for n in numbers if run("git", "-C", str(REPO), "rev-parse", "-q", "--verify", f"refs/pr/{n}", check=False).strip() != extra[n]["head"]]
 if missing:
     raise SystemExit(f"PR heads not fetched or not matching GitHub: {missing[:20]}")
@@ -86,7 +89,7 @@ mergers = {}
 
 def merged_between(start, end):
     """Counts each merger in [start, end], halving the window while search would cut it off at 1,000."""
-    q, cursor = f"repo:openemr/openemr is:pr is:merged merged:{start}..{end}", None
+    q, cursor = f"repo:{P['github']} is:pr is:merged merged:{start}..{end}", None
     while True:
         args = ["gh", "api", "graphql", "-f", f"query={MERGED}", "-f", f"q={q}"] + (["-f", f"cursor={cursor}"] if cursor else [])
         page = json.loads(run(*args))["data"]["search"]
@@ -110,10 +113,10 @@ merged_between(date.today() - timedelta(days=365), date.today())
 (C / "mergers.json").write_text(json.dumps(dict(sorted(mergers.items(), key=lambda x: -x[1]))))
 
 # plan issues, fresh each build
-streams = json.loads((HERE / "streams.json").read_text())
+streams = P["streams"]
 plan = sorted({n for s in streams["streams"] for n in s["plan"]} | {i.get("issue") for s in streams["streams"] for i in s.get("keys_leaving", []) + s.get("removals", [])} - {None})
 for n in plan:
-    out = run("gh", "api", f"repos/openemr/openemr/issues/{n}", "--jq",
+    out = run("gh", "api", f"repos/{P['github']}/issues/{n}", "--jq",
               "{number,title,state,user:.user.login,updated_at,labels:[.labels[].name],body,comments,pr:(.pull_request!=null)}", check=False)
     (C / "issues" / f"{n}.json").write_text(out or "{}")
 print(json.dumps({"open_prs": len(prs), "drafts": sum(p["isDraft"] for p in prs), "heads_fetched": len(numbers) - len(missing),

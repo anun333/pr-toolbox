@@ -151,6 +151,9 @@ pre.cmd { font: 0.78rem/1.5 var(--f-mono); background: var(--paper); border: 1px
 table.triage { min-width: 980px; }
 table.triage th button { all: unset; cursor: pointer; }
 table.triage th button:focus-visible { outline: 2px solid var(--accent); }
+table.triage th .sort { margin-left: 4px; opacity: .35; }
+table.triage th .sort.on { opacity: 1; color: var(--accent); }
+table.triage th button:hover .sort { opacity: .8; }
 table.triage tbody tr { cursor: pointer; }
 table.triage tbody tr:hover { background: var(--accent-soft); }
 table.triage td.t { min-width: 15em; max-width: 360px; }
@@ -212,7 +215,7 @@ table.triage td.t .by { color: var(--muted); font-size: 0.82rem; }
 
   <section class="band" id="triage">
     <div class="band-head"><span class="eyebrow">Triage</span><h2>Every open PR, filtered by what a merge needs</h2>
-      <p class="muted">Combine filters to narrow the list. "Nothing blocking" keeps PRs that are out of draft, merge onto %%BASE%%, pass CI, conflict with no other PR's code, break nothing these checks can see, add nothing the plan is retiring, and keep the version number and caps whole. It is not a review: whether a PR is right is still a reviewer's call. Select a row for its full card.</p></div>
+      <p class="muted">Combine filters to narrow the list. "Nothing blocking" keeps PRs that are out of draft, merge onto %%BASE%%, pass CI, conflict with no other PR's code, break nothing these checks can see, add nothing the plan is retiring, keep the version number and caps whole, and have no changes requested by a maintainer. It is not a review: whether a PR is right is still a reviewer's call. Select a row for its full card.</p></div>
     <div class="panel">
       <div class="row" id="presets"></div>
       <div class="filters" id="filters" role="group" aria-label="Filters"></div>
@@ -497,7 +500,7 @@ function renderGlance() {
     ["all", "", g.open, "open PRs", `${MAP.stamp.drafts} of them drafts`],
     ["alone", "ok", g.alone, "stand alone", "no code conflict, break, stack, duplicate or clash with another open PR, so their order doesn't matter"],
     ["groups", "mech", g.groups, g.groups === 1 ? "group to decide" : "groups to decide", `${g.in_groups} PRs joined by those links; decide each group's order together`],
-    ["shortlist", "ok", shortlist, "nothing blocking", "out of draft, merging, CI passing, nothing in the way these checks can see"],
+    ["shortlist", "ok", shortlist, "nothing blocking", "out of draft, merging, CI passing, no changes requested, nothing in the way these checks can see"],
   ];
   if (MAP.semantic) tiles.push(["clashes", g.clashes ? "conflict" : "", g.clashes, g.clashes === 1 ? "clash" : "clashes", "pairs that merge cleanly but fail together, found by reading both"]);
   $("#glance-row").innerHTML = tiles.map(([id, tone, n, what, why]) => `<button type="button" data-glance="${id}" class="${tone}"><span class="big">${n}</span><span class="what">${esc(what)}</span><span class="why">${esc(why)}</span></button>`).join("");
@@ -515,7 +518,7 @@ function renderGlance() {
     if (id === "groups") { $("#groups-list").open = true; $("#groups-list").scrollIntoView({ behavior: "smooth", block: "start" }); return; }
     if (id === "clashes") { $("#path").scrollIntoView({ behavior: "smooth", block: "start" }); return; }
     tstate.on = new Set(id === "alone" ? ["alone"] : id === "shortlist" ? PRESETS[0][1] : []);
-    tstate.sort = id === "shortlist" ? PRESETS[0][2] : "updated";
+    setSort(id === "shortlist" ? PRESETS[0][2] : "updated");
     drawTriage();
     $("#triage").scrollIntoView({ behavior: "smooth", block: "start" });
   });
@@ -568,7 +571,7 @@ function renderPath() {
   $("#path-body").innerHTML = `
     <div class="grid2">
       <div class="panel"><span class="eyebrow">1 · Maintainers</span><h3>Decide between overlapping PRs</h3><p class="muted">Pick one of each group, or combine them, before anyone reviews twice.</p><ul class="plain">${decide || "<li>None.</li>"}</ul></div>
-      <div class="panel"><span class="eyebrow">2 · Maintainers</span><h3>Review what nothing blocks</h3><p><b class="mono" style="font-size:1.4rem">${shortlist}</b> open PRs have nothing these checks can see in their way: out of draft, merging onto master, passing CI, no code conflict with another PR, no break, nothing the plan retires, version number and caps whole.</p><p><button type="button" class="chipbtn" id="go-shortlist">Show them</button></p><p class="muted">This is not a review. It says only that reviewing one of these won't be wasted on a rebase or a collision, and that each merge from it shortens the queue for the PRs behind.</p></div>
+      <div class="panel"><span class="eyebrow">2 · Maintainers</span><h3>Review what nothing blocks</h3><p><b class="mono" style="font-size:1.4rem">${shortlist}</b> open PRs have nothing these checks can see in their way: out of draft, merging onto ${esc(BASE)}, passing CI, no changes requested by a maintainer, no code conflict with another PR, no break, nothing the plan retires, version number and caps whole.</p><p><button type="button" class="chipbtn" id="go-shortlist">Show them</button></p><p class="muted">This is not a review. It says only that reviewing one of these won't be wasted on a rebase or a collision, and that each merge from it shortens the queue for the PRs behind.</p></div>
       <div class="panel"><span class="eyebrow">3 · Authors</span><h3>Rebase where the fix is mechanical</h3>
         <p><b>${P.rebase_mechanical.length}</b> ${P.rebase_mechanical.length === 1 ? "PR conflicts" : "PRs conflict"} with ${esc(BASE)} only in ${esc(PF.mechanical_note || "mechanical files")}: a rebase with no code decision in it.</p>${more(P.rebase_mechanical, 8, (n) => prLine(n))}
         ${renumber.length ? `<p>${plural(renumber.length, "PR claims", "PRs claim")} a <code>${esc(VN)}</code> that ${esc(BASE)} or another PR already uses: ${renumber.map(prLink).join(" ")}.</p>` : ""}
@@ -581,7 +584,7 @@ function renderPath() {
         <li>Reviewing or testing an open PR in the same area often helps more than a new one.</li></ul></div>
     </div>
     <div class="stack" id="next">${areaTodos}</div>`;
-  $("#go-shortlist").addEventListener("click", () => { tstate.on = new Set(PRESETS[0][1]); tstate.sort = PRESETS[0][2]; drawTriage(); $("#triage").scrollIntoView({ behavior: "smooth", block: "start" }); });
+  $("#go-shortlist").addEventListener("click", () => { tstate.on = new Set(PRESETS[0][1]); setSort(PRESETS[0][2]); drawTriage(); $("#triage").scrollIntoView({ behavior: "smooth", block: "start" }); });
 }
 
 /* the decision card for one PR, and the triage table built from the same facts */
@@ -661,11 +664,12 @@ const FILTERS = [
   ["tests", "Changes tests", (p) => p.tests > 0],
   ["maint", "Maintainer reviewed", (p) => !!p.maint],
   ["nomaint", "No maintainer review yet", (p) => !p.maint],
+  ["nochanges", "No changes requested", (p) => p.maint !== "CHANGES_REQUESTED"],
   ["alone", "Stands alone", (p) => !p.group && !p.mass],
   ["grouped", "In a group", (p) => !!p.group],
 ];
 const PRESETS = [
-  ["Nothing blocking", ["ready", "merges", "ci", "noconf", "nobreak", "plan", "version", "caps"], "age"],
+  ["Nothing blocking", ["ready", "merges", "ci", "nochanges", "noconf", "nobreak", "plan", "version", "caps"], "age"],
   ["Waiting longest for a maintainer", ["ready", "nomaint"], "age"],
   ["Clear filters", [], "updated"],
 ];
@@ -673,8 +677,27 @@ const COLS = [
   ["n", "PR"], ["t", "Title"], ["age", "Age"], ["ci", "CI"], ["maint", "Maintainer"], ["onto", BASE[0].toUpperCase() + BASE.slice(1)],
   ["conf", "Code conflicts"], ["breaks", "Breaks"], ["plan", "Plan"], ["v", VN], ["size", "Size"], ["tests", "Tests"],
 ];
-const SORTS = { n: (p, n) => -n, age: (p) => -p.age, updated: (p) => p.updated, conf: (p) => -codeConf(p), breaks: (p) => -p.breaks, size: (p) => -((p.add || 0) + (p.del || 0)), tests: (p) => -p.tests };
-const tstate = { on: new Set(), sort: "updated", q: "" };
+/* every column sorts. Each sort: a key, the direction a first click gives, and how to say each direction.
+   Ranked columns put what needs attention first: failing CI, changes requested, a rebase, a taken version number. */
+const CI_RANK = { FAILURE: 0, ERROR: 0, PENDING: 1, EXPECTED: 1, SUCCESS: 2 };
+const REVIEW_RANK = { CHANGES_REQUESTED: 0, "": 1, COMMENTED: 2, DISMISSED: 2, APPROVED: 3 };
+const SORTS = {
+  n: [(p) => p.n, "desc", ["lowest number first", "newest number first"]],
+  t: [(p) => p.t.toLowerCase(), "asc", ["title A to Z", "title Z to A"]],
+  age: [(p) => p.age, "desc", ["newest first", "oldest first"]],
+  updated: [(p) => p.updated, "desc", ["least recently updated first", "most recently updated first"]],
+  ci: [(p) => CI_RANK[p.ci] ?? 3, "asc", ["failing CI first", "passing CI first"]],
+  maint: [(p) => REVIEW_RANK[p.maint || ""] ?? 1, "asc", ["changes requested first", "approved first"]],
+  onto: [(p) => (p.mass ? 2 : p.rebase ? 0 : 1), "asc", ["needing a rebase first", "merging cleanly first"]],
+  conf: [(p) => codeConf(p), "desc", ["fewest code conflicts first", "most code conflicts first"]],
+  breaks: [(p) => p.breaks, "desc", ["fewest breaks first", "most breaks first"]],
+  plan: [(p) => p.against.length * 10 - p.toward.length, "desc", ["moving toward the plan first", "adding what the plan retires first"]],
+  v: [(p) => (p.claim_taken ? 0 : realShared(p).length ? 1 : p.no_bump ? 2 : p.claim != null ? 3 : 4), "asc", ["version number problems first", "no version number first"]],
+  size: [(p) => (p.add || 0) + (p.del || 0), "desc", ["smallest first", "largest first"]],
+  tests: [(p) => p.tests, "desc", ["fewest test files first", "most test files first"]],
+};
+const tstate = { on: new Set(), sort: "updated", dir: "desc", q: "" };
+const setSort = (key, dir) => { tstate.sort = SORTS[key] ? key : "updated"; tstate.dir = dir || SORTS[tstate.sort][1]; };
 
 function renderTriage() {
   $("#presets").innerHTML = PRESETS.map(([label], i) => `<button type="button" data-preset="${i}">${esc(label)}</button>`).join("");
@@ -682,7 +705,7 @@ function renderTriage() {
   $("#presets").addEventListener("click", (e) => {
     const b = e.target.closest("[data-preset]"); if (!b) return;
     const [, ids, sort] = PRESETS[+b.dataset.preset];
-    tstate.on = new Set(ids); tstate.sort = sort; drawTriage();
+    tstate.on = new Set(ids); setSort(sort); drawTriage();
   });
   $("#filters").addEventListener("click", (e) => {
     const b = e.target.closest("[data-f]"); if (!b) return;
@@ -691,11 +714,11 @@ function renderTriage() {
   $("#tq").addEventListener("input", (e) => { tstate.q = e.target.value.trim().toLowerCase(); drawTriage(); });
   $("#ttable").addEventListener("click", (e) => {
     const h = e.target.closest("[data-sort]");
-    if (h) { tstate.sort = h.dataset.sort; drawTriage(); return; }
+    if (h) { const k = h.dataset.sort; setSort(k, tstate.sort === k ? (tstate.dir === "asc" ? "desc" : "asc") : undefined); drawTriage(); return; }
     const row = e.target.closest("tr[data-n]");
     if (row && !e.target.closest("a")) { $("#q").value = row.dataset.n; lookup(row.dataset.n); $("#lookup").scrollIntoView({ behavior: "smooth", block: "start" }); }
   });
-  tstate.on = new Set(PRESETS[0][1]); tstate.sort = PRESETS[0][2];
+  tstate.on = new Set(PRESETS[0][1]); setSort(PRESETS[0][2]);
   drawTriage();
 }
 
@@ -703,10 +726,12 @@ function drawTriage() {
   for (const [id] of FILTERS) $(`#f-${id}`).setAttribute("aria-pressed", String(tstate.on.has(id)));
   const tests = FILTERS.filter(([id]) => tstate.on.has(id)).map(([, , f]) => f);
   let rows = Object.entries(MAP.prs).filter(([, p]) => tests.every((f) => f(p)) && (!tstate.q || p.t.toLowerCase().includes(tstate.q) || p.by.toLowerCase().includes(tstate.q) || String(p.n) === tstate.q.replace(/^#/, "")));
-  const key = SORTS[tstate.sort] || SORTS.updated;
-  rows.sort((a, b) => { const x = key(a[1], +a[0]), y = key(b[1], +b[0]); return tstate.sort === "updated" ? (x < y ? 1 : x > y ? -1 : 0) : x - y; });
-  $("#tcount").textContent = `${rows.length} of ${Object.keys(MAP.prs).length} open PRs`;
-  const head = `<thead><tr>${COLS.map(([k, label]) => SORTS[k] ? `<th class="${["age", "conf", "breaks", "size", "tests"].includes(k) ? "n" : ""}"><button type="button" data-sort="${k}">${esc(label)}${tstate.sort === k ? " ↓" : ""}</button></th>` : `<th>${esc(label)}</th>`).join("")}</tr></thead>`;
+  const [key, , says] = SORTS[tstate.sort], sign = tstate.dir === "asc" ? 1 : -1;
+  // ties keep the longest-open first, then the lower number, so every order is the same on every load
+  rows.sort((a, b) => { const x = key(a[1]), y = key(b[1]); return (x < y ? -sign : x > y ? sign : 0) || b[1].age - a[1].age || a[1].n - b[1].n; });
+  $("#tcount").textContent = `${rows.length} of ${Object.keys(MAP.prs).length} open PRs · sorted ${says[tstate.dir === "asc" ? 0 : 1]}`;
+  const head = `<thead><tr>${COLS.map(([k, label]) => { const on = tstate.sort === k;
+    return `<th class="${["age", "conf", "breaks", "size", "tests"].includes(k) ? "n" : ""}" aria-sort="${on ? (tstate.dir === "asc" ? "ascending" : "descending") : "none"}"><button type="button" data-sort="${k}" title="Sort: ${esc(SORTS[k][2][SORTS[k][1] === "asc" ? 0 : 1])}; again to reverse">${esc(label)}<span class="sort${on ? " on" : ""}">${on ? (tstate.dir === "asc" ? "▲" : "▼") : "⇅"}</span></button></th>`; }).join("")}</tr></thead>`;
   const body = rows.map(([n, p]) => `<tr data-n="${n}"><td>${prLink(n)}</td><td class="t">${esc(p.t)}${draft(n)}<div class="by">${esc(p.by)} · ${esc(p.updated)}</div></td>
     <td class="n">${p.age}</td><td>${ciPill(p.ci)}</td><td>${reviewPill(p)}</td><td>${ontoCell(p)}</td>
     <td class="n${codeConf(p) ? "" : " zero"}">${codeConf(p)}</td><td class="n${p.breaks ? "" : " zero"}">${p.breaks}</td><td>${planCell(p)}</td><td>${versionCell(p)}</td>

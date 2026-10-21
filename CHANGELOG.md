@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.8 (2026-10-21)
+
+- **Every triage column sorts.** Before, only 6 of the 12 did, in one direction, with no visible cue.
+  - **Reverse:** a second click reverses the order.
+  - **Ranked columns put what needs attention first:** failing CI, changes requested, a needed rebase, a version number that's taken.
+  - **Cues:** headers show ▲/▼ for the active sort and a faint ⇅ for the others, and carry `aria-sort` for screen readers.
+  - **Stated order:** the count line says the order, such as "sorted oldest first", since a preset's sort can be on a field with no column.
+  - **Ties:** ties keep the longest-open PR first, so every order is the same on every load.
+- **"Nothing blocking" leaves out PRs with changes requested by a maintainer:** the next move there is the author's. On OpenEMR that removed 4 of 80. A new filter, "No changes requested", does the same on its own.
+- **The base branch:** the path forward names the profile's base branch instead of "master".
+
 ## 0.4.7 (2026-10-21)
 
 - **At a glance:** a row of counts at the top of the `motion` page. Each one opens the list behind it:

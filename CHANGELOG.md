@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.4.7 (2026-10-21)
+
+- **At a glance:** a row of counts at the top of the `motion` page. Each one opens the list behind it:
+  - **open PRs**;
+  - **stand alone:** no code conflict, break, stack, same-issue duplicate, shared name or confirmed clash with another open PR, so their order doesn't matter;
+  - **groups to decide:** PRs joined by those links, decided together;
+  - **nothing blocking**;
+  - **clashes.**
+
+  On OpenEMR: 301 open, 218 standalone, 26 groups covering 75 PRs (the largest has 8), 80 with nothing blocking, 2 clashes.
+- **What joins a group:** overlaps only in mechanical files (version files, migrations, lint baselines) don't. They need a rebase, not a decision, and with them the largest group grew to 20. PRs over the file limit were never compared pair by pair, so they never count as standing alone.
+- **The groups list** shows each group's PRs, with the pair links that join them.
+- **Cards:** a PR's card names its group and the PRs to decide it with.
+- **Triage:** two new filters, "Stands alone" and "In a group".
+- **Tests:** a fixture test checks the groups against known links, including that two PRs sharing only a version number stand alone.
+
 ## 0.4.6 (2026-10-21)
 
 - **`motion` reads CI the way `health` does.** It reads each check on a PR's head commit:

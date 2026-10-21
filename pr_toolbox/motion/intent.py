@@ -414,6 +414,65 @@ if (SEM / "verdicts").is_dir():
     data["semantic"] = {"candidates": heads_then.get("candidates"), "read": sum(tally.values()), "tally": dict(tally), "items": items,
                         "read_at": heads_then.get("read_at", "")[:10]}
 
+# --- groups: open PRs joined by a link that needs a decision about order: a code conflict, a break, a stack, a shared
+# name, the same issue, or a clash a reading confirmed. Mechanical conflicts are left out: every schema or lint change
+# shares those files, and they would join much of the queue into one group whose only decision is a rebase. A PR over
+# the file limit was never compared pair by pair, so it is counted apart and never as standing alone.
+links = defaultdict(set)
+
+
+def link(a, b, kind):
+    if a is None or b is None:  # a break against the base itself names no partner PR
+        return
+    a, b = int(a), int(b)
+    if a != b and a in prs_out and b in prs_out:
+        links[(min(a, b), max(a, b))].add(kind)
+
+
+for n, p in prs_out.items():
+    for c in p["conflicts"]:
+        if c["kind"] == "code":
+            link(n, c["n"], "code conflict")
+    for i in p["interacts"]:
+        if BREAK.match(i["what"]):
+            for t in (i["n"] if isinstance(i["n"], list) else [i["n"]]):
+                link(n, t, "break")
+    for m_ in p["same_issue"]:
+        link(n, m_, "same issue")
+for x in findings["stacked"]:
+    link(x["in"], x["contained"], "stacked")
+for x in findings["shared_name"]:
+    for i, a in enumerate(x["prs"]):
+        for b in x["prs"][i + 1:]:
+            link(a, b, "same name")
+for x in (data.get("semantic") or {}).get("items", []):
+    if x["verdict"] == "clash":
+        link(x["a"], x["b"], "clash")
+parent = {}
+
+
+def root(x):
+    while parent.setdefault(x, x) != x:
+        parent[x] = parent[parent[x]]
+        x = parent[x]
+    return x
+
+
+for a, b in links:
+    parent[root(a)] = root(b)
+members = defaultdict(list)
+for x in parent:
+    members[root(x)].append(x)
+groups = sorted((sorted(ms) for ms in members.values()), key=lambda ms: (-len(ms), ms[0]))
+data["groups"] = [{"prs": ms, "links": [{"a": a, "b": b, "kinds": sorted(links[(a, b)])} for (a, b) in sorted(links) if a in ms]}
+                  for ms in groups]
+for gi, g in enumerate(data["groups"], 1):
+    for n in g["prs"]:
+        prs_out[n]["group"] = gi
+data["glance"] = {"open": len(prs_out), "mass": len(mass), "groups": len(groups), "in_groups": sum(len(g) for g in groups),
+                  "alone": sum(1 for n, p in prs_out.items() if not p.get("group") and n not in mass),
+                  "clashes": sum(1 for x in (data.get("semantic") or {}).get("items", []) if x["verdict"] == "clash")}
+
 (W / "map.json").write_text(json.dumps(data))
 fill = {"%%TITLE%%": P["title"], "%%GITHUB%%": P["github"], "%%PROJECT%%": P["project"], "%%BASE%%": P["base_branch"],
         "%%MECH%%": P["mechanical_note"]}

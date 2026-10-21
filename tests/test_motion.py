@@ -205,6 +205,20 @@ class MotionFixture(unittest.TestCase):
         data = json.loads((self.work / "map.json").read_text())
         self.assertEqual(data["streams"][0]["target"][0]["verified"], "verbatim")
 
+    def test_groups_join_what_needs_a_decision(self) -> None:
+        r = self.page("New code goes in src/, and every change needs a test.")
+        self.assertEqual(r.returncode, 0, r.stderr[-1500:])
+        data = json.loads((self.work / "map.json").read_text())
+        # 1 and 2 conflict and 3 is built on 1; 4 deletes what 5 changes; 6 and 7 add one route
+        self.assertEqual([[1, 2, 3], [4, 5], [6, 7]], [g["prs"] for g in data["groups"]])
+        kinds = {(x["a"], x["b"]): x["kinds"] for g in data["groups"] for x in g["links"]}
+        self.assertIn("stacked", kinds[(1, 3)])
+        self.assertIn("same name", kinds[(6, 7)])
+        self.assertEqual(1, data["prs"]["1"]["group"] if "1" in data["prs"] else data["prs"][1]["group"])
+        # 8 and 9 share only a version number: a renumber, not a decision, so both stand alone
+        self.assertEqual({"open": 9, "alone": 2, "groups": 3, "in_groups": 7},
+                         {k: data["glance"][k] for k in ("open", "alone", "groups", "in_groups")})
+
     def test_a_drifted_quote_stops_the_page(self) -> None:
         r = self.page("New code goes in lib/, and every change needs a test.")
         self.assertEqual(r.returncode, 2, "a quote its source doesn't contain must stop the build")

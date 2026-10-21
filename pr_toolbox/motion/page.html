@@ -69,6 +69,19 @@ nav.toc { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s4); padding-bloc
 section.band { padding-block: var(--s6); border-bottom: 1px solid var(--rule); display: flex; flex-direction: column; gap: var(--s5); }
 .band-head { display: flex; flex-direction: column; gap: var(--s2); }
 
+/* at a glance: the counts a maintainer needs first, each one a way into the list behind it */
+.glance { padding-block: var(--s5); border-bottom: 1px solid var(--rule); display: flex; flex-direction: column; gap: var(--s3); }
+.glance-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--s3); }
+.glance-row button { all: unset; box-sizing: border-box; cursor: pointer; background: var(--sheet); border: 1px solid var(--rule); border-radius: 6px; padding: var(--s3) var(--s4); display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.glance-row button:hover { border-color: var(--accent); }
+.glance-row button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.glance-row .big { font: 700 2rem/1 var(--f-display); font-variant-numeric: tabular-nums; }
+.glance-row .ok .big { color: var(--ok); } .glance-row .mech .big { color: var(--mech); } .glance-row .conflict .big { color: var(--conflict); }
+.glance-row .what { font-weight: 700; font-size: .95rem; }
+.glance-row .why { font-size: .8rem; color: var(--muted); line-height: 1.35; }
+.glance-note { font-size: .85rem; max-width: none; }
+.group { border-left: 3px solid var(--mech); padding-left: var(--s3); display: flex; flex-direction: column; gap: var(--s2); }
+
 /* lookup */
 .lookup { background: var(--sheet); border: 1px solid var(--rule); border-radius: 6px; padding: var(--s5); display: flex; flex-direction: column; gap: var(--s4); }
 .lookup form { display: flex; gap: var(--s2); flex-wrap: wrap; }
@@ -171,6 +184,12 @@ table.triage td.t .by { color: var(--muted); font-size: 0.82rem; }
   <nav class="toc" aria-label="Sections">
     <a href="#lookup">Look up</a><a href="#path">Path forward</a><a href="#triage">Triage</a><a href="#start">Before you start</a><a href="#areas">Areas</a><a href="#twice">Same work twice</a><a href="#merge">Merge view</a><a href="#releases">Releases</a><a href="#method">Method and limits</a>
   </nav>
+
+  <section class="glance" id="glance" aria-label="At a glance">
+    <div class="glance-row" id="glance-row"></div>
+    <p class="muted glance-note" id="glance-note"></p>
+    <details id="groups-list"><summary id="groups-summary"></summary><div class="stack" id="groups-body"></div></details>
+  </section>
 
   <section class="band" id="lookup">
     <div class="band-head"><span class="eyebrow">Look up</span><h2>A file, a folder or a PR</h2></div>
@@ -468,6 +487,42 @@ function rebuildPanel() {
     </ul></div>`;
 }
 
+/* at a glance: open PRs, those that stand alone, the groups whose order needs deciding, the shortlist, clashes */
+const KIND_ORDER = ["clash", "break", "code conflict", "stacked", "same issue", "same name"];
+function renderGlance() {
+  const g = MAP.glance;
+  if (!g) { $("#glance").hidden = true; return; }
+  const shortlist = Object.values(MAP.prs).filter((p) => PRESETS[0][1].every((id) => FILTERS.find((f) => f[0] === id)[2](p))).length;
+  const tiles = [
+    ["all", "", g.open, "open PRs", `${MAP.stamp.drafts} of them drafts`],
+    ["alone", "ok", g.alone, "stand alone", "no code conflict, break, stack, duplicate or clash with another open PR, so their order doesn't matter"],
+    ["groups", "mech", g.groups, g.groups === 1 ? "group to decide" : "groups to decide", `${g.in_groups} PRs joined by those links; decide each group's order together`],
+    ["shortlist", "ok", shortlist, "nothing blocking", "out of draft, merging, CI passing, nothing in the way these checks can see"],
+  ];
+  if (MAP.semantic) tiles.push(["clashes", g.clashes ? "conflict" : "", g.clashes, g.clashes === 1 ? "clash" : "clashes", "pairs that merge cleanly but fail together, found by reading both"]);
+  $("#glance-row").innerHTML = tiles.map(([id, tone, n, what, why]) => `<button type="button" data-glance="${id}" class="${tone}"><span class="big">${n}</span><span class="what">${esc(what)}</span><span class="why">${esc(why)}</span></button>`).join("");
+  $("#glance-note").innerHTML = `Counts, not a review. Overlaps only in ${esc(PF.mechanical_note || "mechanical files")} join no group: they need a rebase, not a decision.${g.mass ? ` The ${plural(g.mass, "PR", "PRs")} over ${MASS} files ${g.mass === 1 ? "was" : "were"} not compared pair by pair, so none counts as standing alone.` : ""}`;
+  $("#groups-summary").textContent = g.groups ? `The ${plural(g.groups, "group", "groups")}, largest first` : "No groups";
+  $("#groups-body").innerHTML = (MAP.groups || []).map((gr, i) => {
+    const kinds = [...new Set(gr.links.flatMap((l) => l.kinds))].sort((a, b) => KIND_ORDER.indexOf(a) - KIND_ORDER.indexOf(b));
+    const pairs = gr.links.map((l) => `${prLink(l.a)}–${prLink(l.b)} ${esc(l.kinds.join(", "))}`).join(" · ");
+    return `<div class="group" id="group-${i + 1}"><p><b>Group ${i + 1}</b> · ${plural(gr.prs.length, "PR", "PRs")} · ${esc(kinds.join(", "))}</p>
+      <ul class="plain">${gr.prs.map((n) => prLine(n)).join("")}</ul><p class="muted" style="font-size:.85rem">${pairs}</p></div>`;
+  }).join("");
+  $("#glance-row").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-glance]"); if (!b) return;
+    const id = b.dataset.glance;
+    if (id === "groups") { $("#groups-list").open = true; $("#groups-list").scrollIntoView({ behavior: "smooth", block: "start" }); return; }
+    if (id === "clashes") { $("#path").scrollIntoView({ behavior: "smooth", block: "start" }); return; }
+    tstate.on = new Set(id === "alone" ? ["alone"] : id === "shortlist" ? PRESETS[0][1] : []);
+    tstate.sort = id === "shortlist" ? PRESETS[0][2] : "updated";
+    drawTriage();
+    $("#triage").scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+  // a link to a group opens the list it sits in
+  document.addEventListener("click", (e) => { if (e.target.closest('a[href^="#group-"]')) $("#groups-list").open = true; });
+}
+
 /* the path forward: decide, land, rebase, then pick up new work in each plan's own order */
 const STATUS = { "in flight": "info", waiting: "mech", free: "ok", done: "ok" };
 function todoItem(t) {
@@ -572,10 +627,11 @@ function prCard(n, p) {
       ${p.caps_with.map((c) => li(`<span class="pill conflict">caps</span> merged with ${prLink(c.n)}: ${esc(c.caps.join("; "))}`)).join("")}</ul></div>
     <div class="panel"><h4>Meets other work</h4><ul class="plain">
       ${breaks.map((i) => li(`<span class="pill conflict">breaks</span> ${linkNums(i.what)}`)).join("")}
+      ${p.group ? li(`<span class="pill mech">group ${p.group}</span> decide its order with ${MAP.groups[p.group - 1].prs.filter((m) => m !== +n).map(prLink).join(", ")} <a href="#group-${p.group}">the group</a>`) : ""}
       ${p.same_issue.length ? li(`<span class="pill info">same issue</span> ${p.same_issue.map((m) => prLink(m) + draft(m)).join(", ")}`) : ""}
       ${(p.judged || []).map((j) => li(`<span class="pill ${j.verdict === "clash" ? "conflict" : "mech"}">read: ${esc(j.verdict)}</span> with ${prLink(j.n)}: ${linkNums(j.summary)} <span class="muted">(judgement${j.outcome ? ", " + esc(OUTCOME[j.outcome]?.[1] || j.outcome) : ""}${j.stale ? ", read on an earlier version" : ""})</span>`)).join("")}
       ${near.map((i) => li(`<span class="pill info">near</span> ${linkNums(i.what)}${Array.isArray(i.n) ? " " + i.n.map(prLink).join(", ") : ""}`)).join("")}
-      ${!breaks.length && !near.length && !p.same_issue.length ? li('<span class="muted">nothing found</span>') : ""}</ul></div>
+      ${!breaks.length && !near.length && !p.same_issue.length && !p.group ? li('<span class="muted">nothing found</span>') : ""}</ul></div>
   </div>
   <details><summary>Check it yourself</summary><pre class="cmd">${esc(checkCommands(n, p, code))}</pre>
     <p class="muted" style="font-size:.85rem">git's own merge decides every conflict on this card. <code>merge-tree</code> exits with 1 and lists the conflicted files, or 0 when the merge is clean; nothing is written to your branches.</p></details>`;
@@ -605,6 +661,8 @@ const FILTERS = [
   ["tests", "Changes tests", (p) => p.tests > 0],
   ["maint", "Maintainer reviewed", (p) => !!p.maint],
   ["nomaint", "No maintainer review yet", (p) => !p.maint],
+  ["alone", "Stands alone", (p) => !p.group && !p.mass],
+  ["grouped", "In a group", (p) => !!p.group],
 ];
 const PRESETS = [
   ["Nothing blocking", ["ready", "merges", "ci", "noconf", "nobreak", "plan", "version", "caps"], "age"],
@@ -696,5 +754,5 @@ function wireLookup() {
   $("#q").value = ex[0]; lookup(ex[0]);
 }
 
-renderStamp(); renderStart(); renderAreas(); renderTwice(); renderMerge(); renderReleases(); renderMethod(); renderTriage(); renderPath(); wireLookup();
+renderStamp(); renderStart(); renderAreas(); renderTwice(); renderMerge(); renderReleases(); renderMethod(); renderTriage(); renderPath(); renderGlance(); wireLookup();
 </script>

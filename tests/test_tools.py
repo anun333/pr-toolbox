@@ -15,7 +15,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from pr_toolbox import common, landing_order, pr_check, pr_health  # noqa: E402
+from pr_toolbox import common, landing_order, pr_check, pr_health, trailers  # noqa: E402
 
 
 def repo_with(files: dict[str, str]) -> Path:
@@ -290,6 +290,173 @@ class PrCheckTest(unittest.TestCase):
         self.assertEqual("fail", status)
         self.assertIn("has /^Co-Authored-By:/", detail)
         self.assertIn("lacks /^Assisted-by:/", detail)
+
+    def test_without_flags_the_profiles_trailer_rules_are_forbidden(self):
+        repo = self.branch({"a.txt": "x"}, message="fix: a\n\nCo-Authored-By: Claude <c@example.org>")
+        profile = {"trailers": {"replace": [{"from": "^Co-Authored-By: Claude", "to": "Assisted-by: Claude Code"}]}}
+        status, detail = self.check_for(repo, config=profile).trailers()
+        self.assertEqual("fail", status)
+        self.assertIn("pr-toolbox trailers", detail)
+        self.assertEqual("skip", self.check_for(repo, config={}).trailers()[0])
+
+
+CLAUDE = "Co-Authored-By: Claude Opus <noreply@example.org>"
+SWAP = trailers.Rules.make([], [("^Co-Authored-By: Claude", "Assisted-by: Claude Code")])
+
+
+def git_out(repo: Path, *args: str, **env: str) -> str:
+    import os
+    run = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, check=True, env={**os.environ, **env})
+    return run.stdout.strip()
+
+
+def dated_commit(repo: Path, files: dict[str, str], message: str, when: str) -> str:
+    for name, text in files.items():
+        (repo / name).write_text(text)
+    git_out(repo, "add", "-A")
+    git_out(repo, "commit", "-q", "-m", message, GIT_AUTHOR_DATE=when, GIT_COMMITTER_DATE=when,
+            GIT_AUTHOR_NAME="Ann Author", GIT_AUTHOR_EMAIL="ann@example.org")
+    return git_out(repo, "rev-parse", "HEAD")
+
+
+class TrailersTest(unittest.TestCase):
+    def test_messages(self):
+        block = f"fix: a\n\nWhy it changed.\n\n{CLAUDE}\nSigned-off-by: A <a@example.org>\n"
+        new, removed, added = trailers.rewrite_message(block, SWAP)
+        self.assertEqual("fix: a\n\nWhy it changed.\n\nSigned-off-by: A <a@example.org>\nAssisted-by: Claude Code\n", new)
+        self.assertEqual(([CLAUDE], ["Assisted-by: Claude Code"]), (removed, added))
+        new, _, _ = trailers.rewrite_message(f"docs: a\n\n{CLAUDE}\n", SWAP)
+        self.assertEqual("docs: a\n\nAssisted-by: Claude Code\n", new, "a subject alone is not a trailer block")
+        new, _, added = trailers.rewrite_message(f"fix: a\n\nAssisted-by: Claude Code\n{CLAUDE}\n", SWAP)
+        self.assertEqual(("fix: a\n\nAssisted-by: Claude Code\n", []), (new, added))
+        prose = "fix: a\n\nWe thanked Co-Authored-By: Claude in prose.\n"
+        self.assertEqual(prose, trailers.rewrite_message(prose, SWAP)[0], "only lines shaped like trailers match")
+        squashed = f"feat: b\n\n* part one\n\n{CLAUDE}\n\n* part two\n\n{CLAUDE}\n"
+        new, removed, added = trailers.rewrite_message(squashed, SWAP)
+        self.assertEqual((2, 1), (len(removed), len(added)))
+        self.assertEqual(1, new.count("Assisted-by: Claude Code"))
+        dropped = trailers.Rules.make(["^Test-Mode:"], [])
+        self.assertEqual(("fix: a\n", ["Test-Mode: full"], []), trailers.rewrite_message("fix: a\n\nTest-Mode: full\n", dropped))
+
+    def branch(self) -> tuple[Path, str, str]:
+        repo = repo_with({"a.txt": "base\n"})
+        git_out(repo, "checkout", "-q", "-b", "work")
+        dated_commit(repo, {"a.txt": "one\n"}, "feat: one", "1700000000 +0200")
+        dated_commit(repo, {"b.txt": "two\n"}, f"fix: two\n\nBody.\n\n{CLAUDE}", "1700000100 -0500")
+        git_out(repo, "checkout", "-q", "master")
+        dated_commit(repo, {"m.txt": "master moved\n"}, "chore: master", "1700000200 +0000")
+        git_out(repo, "checkout", "-q", "work")
+        git_out(repo, "merge", "-q", "--no-ff", "-m", "Merge branch 'master' into work", "master",
+                GIT_AUTHOR_DATE="1700000300 +0000", GIT_COMMITTER_DATE="1700000300 +0000")
+        dated_commit(repo, {"c.txt": "three\n"}, f"docs: three\n\n{CLAUDE}", "1700000400 +0100")
+        return repo, git_out(repo, "merge-base", "master", "work"), git_out(repo, "rev-parse", "work")
+
+    def test_a_range_keeps_every_tree_author_and_date(self):
+        repo, base, head = self.branch()
+        mapping, shas, changed = trailers.rewrite_range(repo, base, head, SWAP)
+        self.assertEqual(4, len(shas), "one, two, the merge, three")
+        self.assertEqual(shas[0], mapping[shas[0]], "a commit before the first change keeps its sha")
+        self.assertEqual(["fix: two", "docs: three"], [c["subject"] for c in changed])
+        self.assertEqual([], trailers.verify(repo, base, mapping, shas, SWAP))
+        new = mapping[head]
+        fmt = "--format=%T %an <%ae> %ad %cn <%ce> %cd"
+        self.assertEqual(git_out(repo, "log", "--date=raw", fmt, f"{base}..{head}"),
+                         git_out(repo, "log", "--date=raw", fmt, f"{base}..{new}"))
+        messages = git_out(repo, "log", "--format=%B", f"{base}..{new}")
+        self.assertNotIn("Co-Authored-By", messages)
+        self.assertEqual(2, messages.count("Assisted-by: Claude Code"))
+        self.assertEqual(2, len(git_out(repo, "rev-list", "--parents", "-1", new + "^").split()) - 1, "the merge is still a merge")
+        same, _, none = trailers.rewrite_range(repo, base, head, trailers.Rules.make(["^Nope:"], []))
+        self.assertEqual((head, []), (same[head], none), "no match, no new commits")
+
+    def test_a_tampered_rewrite_is_caught(self):
+        repo, base, head = self.branch()
+        mapping, shas, _ = trailers.rewrite_range(repo, base, head, SWAP)
+        other = git_out(repo, "commit-tree", git_out(repo, "rev-parse", f"{base}^{{tree}}"), "-p", base, "-m", "x")
+        mapping[shas[1]] = other
+        self.assertTrue(trailers.verify(repo, base, mapping, shas, SWAP))
+
+    def test_signed_commits_are_refused(self):
+        repo = repo_with({"a.txt": "base\n"})
+        base = git_out(repo, "rev-parse", "HEAD")
+        raw = git_out(repo, "cat-file", "commit", base).split("\n\n", 1)[0]
+        lines = raw.split("\n")
+        obj = "\n".join([lines[0], f"parent {base}", *lines[1:]]) + "\ngpgsig -----BEGIN PGP SIGNATURE-----\n x\n -----END PGP SIGNATURE-----\n\nfix: a\n\n" + CLAUDE + "\n"
+        sha = subprocess.run(["git", "-C", str(repo), "hash-object", "-t", "commit", "-w", "--stdin"], input=obj,
+                             capture_output=True, text=True, check=True).stdout.strip()
+        with self.assertRaisesRegex(common.ToolError, "signed"):
+            trailers.rewrite_range(repo, base, sha, SWAP)
+
+    def remotes(self) -> tuple[Path, Path, Path, str]:
+        """A clone with upstream (the project, holding refs/pull/7/head and /8/head) and origin (your fork)."""
+        work, base, head = self.branch()
+        upstream, fork = Path(tempfile.mkdtemp()), Path(tempfile.mkdtemp())
+        for bare in (upstream, fork):
+            subprocess.run(["git", "init", "-q", "--bare", "-b", "master", str(bare)], check=True)
+        git_out(work, "push", "-q", str(upstream), "master", "work:refs/pull/7/head", "work:refs/pull/8/head")
+        git_out(work, "push", "-q", str(fork), "work")
+        clone = Path(tempfile.mkdtemp()) / "clone"
+        subprocess.run(["git", "clone", "-q", "-o", "upstream", str(upstream), str(clone)], check=True)
+        git_out(clone, "remote", "add", "origin", str(fork))
+        return clone, upstream, fork, head
+
+    def run_main(self, clone: Path, *argv: str) -> tuple[int, str]:
+        import contextlib
+        import io
+
+        def info(github, number):
+            return {"state": "open", "user": {"login": "me" if number == 7 else "someone"},
+                    "head": {"ref": "work", "sha": head_of(clone, number), "repo": {"full_name": "me/tool"}}}
+
+        def head_of(clone, number):
+            return git_out(Path(self.upstream), "rev-parse", f"refs/pull/{number}/head")
+
+        out = io.StringIO()
+        with mock.patch.object(trailers, "pr_info", info), mock.patch.object(trailers, "current_login", return_value="me"), \
+                contextlib.redirect_stdout(out):
+            code = trailers.main(["--repo", str(clone), "--github-repo", "owner/tool", "--base-branch", "master",
+                                  "--remote", "upstream", "--push-remote", "origin", *argv])
+        return code, out.getvalue()
+
+    def test_the_command_dry_runs_then_pushes_only_your_prs(self):
+        clone, self.upstream, fork, head = self.remotes()
+        swap = ["--replace", "^Co-Authored-By: Claude", "Assisted-by: Claude Code"]
+        code, out = self.run_main(clone, "7", "8", *swap)
+        self.assertEqual(0, code, out)
+        self.assertIn("2 of 4 commits rewritten", out)
+        self.assertIn("Dry run: nothing pushed", out)
+        self.assertIn("#8: skipped, opened by someone, not you", out)
+        self.assertEqual(head, git_out(fork, "rev-parse", "work"), "a dry run pushes nothing")
+        code, out = self.run_main(clone, "7", "8", "--push", *swap)
+        self.assertEqual(0, code, out)
+        pushed = git_out(fork, "rev-parse", "work")
+        self.assertNotEqual(head, pushed)
+        self.assertEqual(git_out(fork, "rev-parse", f"{head}^{{tree}}"), git_out(fork, "rev-parse", f"{pushed}^{{tree}}"))
+        self.assertNotIn("Co-Authored-By", git_out(fork, "log", "--format=%B", "work"))
+
+    def test_the_lease_refuses_a_branch_that_moved(self):
+        clone, self.upstream, fork, head = self.remotes()
+        elsewhere = Path(tempfile.mkdtemp()) / "elsewhere"
+        subprocess.run(["git", "clone", "-q", "-b", "work", str(fork), str(elsewhere)], check=True)
+        git_out(elsewhere, "config", "user.email", "t@example.org")
+        git_out(elsewhere, "config", "user.name", "t")
+        git_out(elsewhere, "commit", "-q", "--allow-empty", "-m", "pushed from another machine")
+        git_out(elsewhere, "push", "-q", "origin", "work")
+        moved = git_out(fork, "rev-parse", "work")
+        code, out = self.run_main(clone, "7", "--push", "--replace", "^Co-Authored-By: Claude", "Assisted-by: Claude Code")
+        self.assertEqual(1, code, out)
+        self.assertIn("push refused, nothing changed", out)
+        self.assertEqual(moved, git_out(fork, "rev-parse", "work"))
+
+    def test_the_profile_supplies_rules_when_no_flags_are_given(self):
+        clone, self.upstream, fork, head = self.remotes()
+        code, out = self.run_main(clone, "7")
+        self.assertEqual(2, code, "no rules anywhere")
+        (clone / ".pr-toolbox.json").write_text('{"trailers": {"remove": ["^Co-Authored-By: Claude"]}}')
+        code, out = self.run_main(clone, "7")
+        self.assertEqual(0, code, out)
+        self.assertIn("     - " + CLAUDE, out)
+        self.assertNotIn("     + ", out)
 
 
 if __name__ == "__main__":

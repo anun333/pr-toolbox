@@ -21,6 +21,7 @@ import sys
 from pathlib import Path
 
 from .common import (Target, add_target_arguments, caps_mismatches, gh, git, matches, merged, open_prs, resolve, version_claim)
+from .trailers import Rules
 
 BUILT_IN_FIRST = ["merges"]
 BUILT_IN_LAST = ["codespell", "caps", "version", "version-claims", "secrets", "trailers"]
@@ -209,18 +210,23 @@ class Check:
         return ("fail", "values of " + ", ".join(hits) + " appear in the diff") if hits else ("pass", f"{len(values)} values checked")
 
     def trailers(self) -> tuple[str, str]:
-        if not self.args.forbid_trailer and not self.args.require_trailer:
+        # without flags, the trailers the profile's "trailers" section removes or replaces are the forbidden ones
+        profile_rules = Rules.from_profile(self.config)
+        forbid = self.args.forbid_trailer or profile_rules.patterns()
+        if not forbid and not self.args.require_trailer:
             return "skip", "no trailer rules given"
         log = git(self.repo, "log", "--format=%h%x00%B%x1e", f"{self.merge_base}..HEAD").stdout
         problems = []
         for entry in filter(str.strip, log.split("\x1e")):
             sha, message = entry.strip().split("\x00", 1)
-            for pattern in self.args.forbid_trailer or []:
+            for pattern in forbid:
                 if re.search(pattern, message, re.M):
                     problems.append(f"{sha} has /{pattern}/")
             for pattern in self.args.require_trailer or []:
                 if not re.search(pattern, message, re.M):
                     problems.append(f"{sha} lacks /{pattern}/")
+        if problems and not self.args.forbid_trailer and profile_rules:
+            problems.append("pr-toolbox trailers rewrites them once the branch is a PR")
         return ("fail", "; ".join(problems)) if problems else ("pass", "commits follow the trailer rules")
 
     def plan(self) -> list[tuple[str, object]]:

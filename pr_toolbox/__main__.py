@@ -1,20 +1,21 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""pr-toolbox landing|health|check|motion [options] (also installed as pr-tools and openemr-pr-tools)"""
+"""pr-toolbox landing|health|check|trailers|motion [options] (also installed as pr-tools and openemr-pr-tools)"""
 
 import sys
 
-from . import __version__, landing_order, pr_check, pr_health
+from . import __version__, landing_order, pr_check, pr_health, trailers
 from .motion import cli as motion_cli
 
-COMMANDS = {"landing": landing_order.main, "health": pr_health.main, "check": pr_check.main, "motion": motion_cli.main}
+COMMANDS = {"landing": landing_order.main, "health": pr_health.main, "check": pr_check.main, "trailers": trailers.main, "motion": motion_cli.main}
 
 
 def main() -> int:
     if len(sys.argv) < 2 or sys.argv[1] in {"-h", "--help"}:
-        print(f"pr-toolbox {__version__}\n\nusage: pr-toolbox {{landing,health,check,motion}} [options]\n\n"
+        print(f"pr-toolbox {__version__}\n\nusage: pr-toolbox {{landing,health,check,trailers,motion}} [options]\n\n"
               "  landing  which open PRs each of your PRs conflicts with, and its landing-order line\n"
               "  health   what changed on your open PRs: CI, conflicts with the base branch, review threads, merges\n"
               "  check    what your project's CI will say about your branch, before you push\n"
+              "  trailers rewrite commit trailers on your own open PRs, trees untouched (a dry run unless --push)\n"
               "  motion   a map of all open PRs for maintainers: what merging each does to the others, the plan per area\n\n"
               "The repository comes from the current checkout (or --repo, --github-repo). Projects with a built-in\n"
               "profile (openemr/openemr) get its rules and checks; others can add a .pr-toolbox.json.\n"
@@ -25,7 +26,7 @@ def main() -> int:
         return 0
     command = COMMANDS.get(sys.argv[1])
     if command is None:
-        print(f"unknown command {sys.argv[1]!r}; try landing, health, check or motion", file=sys.stderr)
+        print(f"unknown command {sys.argv[1]!r}; try landing, health, check, trailers or motion", file=sys.stderr)
         return 2
     return command(sys.argv[2:])
 

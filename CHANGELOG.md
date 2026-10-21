@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.4 (2026-10-20)
+
+New command: **`pr-toolbox trailers`**. It rewrites commit trailers on your own open PRs, for example `Co-Authored-By: Claude …` to the `Assisted-by: Claude Code` a project asks for.
+- **What changes:** only messages, and the parent lines that follow from them. Trees, authors, committers and dates are kept byte for byte.
+- **The check:** before anything is pushed, the new branch must have the same commits, each with its old tree, author and committer, and no matching trailer left.
+- **Safety:** a dry run unless `--push`, which pushes with a lease on the head it read. It works only on PRs you opened, and refuses signed commits.
+- **Rules:** from `--remove` and `--replace`, or the profile's new `trailers` section.
+- **`check`:** without `--forbid-trailer`, its `trailers` step forbids what the profile's `trailers` rules remove.
+- **README:** the OpenEMR example now matches `Assisted-By` as well as `Assisted-by`, as OpenEMR's `CONTRIBUTING.md` writes it. It no longer presents a ban on `Co-Authored-By` as an OpenEMR rule, because OpenEMR's documents don't make one.
+
 ## 0.4.3 (2026-10-20)
 
 - A [Claude Code](https://claude.com/claude-code) skill for `motion`: [`skills/pr-toolbox-motion/SKILL.md`](skills/pr-toolbox-motion/SKILL.md). It covers building the map, reading candidate pairs for semantic clashes, writing a project profile, and changing `motion` itself, with the rules and the traps met building it.

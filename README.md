@@ -7,6 +7,7 @@ Quiet, local tools for people who send pull requests to a busy GitHub project:
 | `pr-toolbox landing` | Which open PRs does each of my PRs conflict with, and in what order should they land? |
 | `pr-toolbox health` | What changed on my open PRs since I last looked: CI, conflicts with the base branch, review threads, merges? |
 | `pr-toolbox check` | What will the project's CI say about this branch, before I push it? |
+| `pr-toolbox trailers` | Can my PRs' commits carry the trailer this project asks for, with nothing else changed? |
 | `pr-toolbox motion` | For maintainers: what does merging each open PR do to the others, and where is each area of the code going? |
 
 Large projects can have hundreds of open pull requests and a few volunteers to review them. These tools help a contributor:
@@ -19,6 +20,8 @@ Large projects can have hundreds of open pull requests and a few volunteers to r
 They work on any GitHub repository. They were first written for [OpenEMR](https://github.com/openemr/openemr), which has a built-in profile (see [The OpenEMR profile](#the-openemr-profile)). The command is `pr-toolbox`. `pr-tools` and `openemr-pr-tools`, its names before 0.3.0, also work.
 
 They don't comment, label, ping or re-run anything on GitHub. `health` and `check` only read. `landing` reads too, unless you pass `--apply` or `--rewrite`. Then it rewrites the first paragraph of your own PRs' descriptions, and only when the facts behind that paragraph changed. Editing a description sends nobody a notification.
+
+`trailers` only reads unless you pass `--push`. Then it force-pushes rewritten commits to your own PRs' branches, with a lease, after checking that every tree is unchanged. Like any push, it updates the PR and can re-run its CI.
 
 ## Install
 
@@ -73,6 +76,7 @@ A profile is a JSON object; every key is optional:
 | `health_ignore` | `health` | regex of CI check names to leave out (default `^codecov/`) |
 | `version_claims` | `landing`, `check` | a version number that every schema change takes; see below |
 | `exact_caps` | `landing`, `check` | counts that one file pins exactly; see below |
+| `trailers` | `trailers`, `check` | `{"remove": [regex, …], "replace": [{"from": regex, "to": line}, …]}`: trailers your commits shouldn't carry, and what replaces them |
 
 This repository's own [`.pr-toolbox.json`](.pr-toolbox.json) is a small example.
 
@@ -207,13 +211,44 @@ It compares the checkout with the base branch, counting committed, uncommitted a
 | `version` | when versioned files changed: the number is above the base's, its mirrors agree, and blocks balance |
 | `version-claims` | when the version file changed: whether another open PR claims the same number |
 | `secrets` | whether any value from `--secrets-env` (a `KEY=VALUE` file) appears in the diff. It names keys, never values. |
-| `trailers` | commit messages against `--forbid-trailer` and `--require-trailer` patterns |
+| `trailers` | commit messages against `--forbid-trailer` and `--require-trailer` patterns; without `--forbid-trailer`, the profile's `trailers` rules are the forbidden ones |
 
 A step that can't run counts as a failure, not a pass. The exit code is 1 when any step fails.
 
 **Container.** `--container auto` finds the running container that mounts the checkout at `container.app_dir`.
 
 **CPU.** The steps run one after another. `--workers` fills `{workers}` in the profile's commands.
+
+## `trailers`: fix commit trailers on your PRs
+
+```
+pr-toolbox trailers [PR …] [--mine] [--remove REGEX]… [--replace REGEX LINE]… \
+    [--push] [--push-remote NAME] [--json]
+```
+
+It rewrites the commit messages on your own open PRs, and changes nothing else. A project may ask for a different AI trailer than your tool wrote, or want a work-in-progress trailer gone before merge.
+- **Which commits:** every commit between the base branch and the PR's head.
+- **`--remove REGEX`:** drops trailer lines that match.
+- **`--replace REGEX LINE`:** drops them and adds `LINE` once to each commit that had one, unless it's already there.
+- **Which lines can match:** lines shaped like trailers (`Key: value`), anywhere in the message, since a squashed commit carries its parts' trailers in the middle. Prose is left alone.
+- **Rules from the profile:** without flags, the rules come from the profile's `trailers` section.
+
+What it keeps, and checks before anything is pushed:
+- **Commits:** each one keeps its tree, author, committer and dates, byte for byte. Only the message changes, and the parent lines that follow from it.
+- **Unchanged commits:** a commit before the first change keeps its SHA.
+- **The check:** the new branch must have the same commits, each with its old tree, author and committer, and no matching trailer left. If not, nothing is pushed.
+
+Its limits:
+- **Your PRs only.** A PR someone else opened is skipped.
+- **Signed commits are refused.** A rewrite would drop the signature.
+- **Dry run by default.** It prints each change as `-`/`+` lines and pushes nothing.
+- **`--push`:** force-pushes each branch with a lease on the head it read, so a branch that moved since is refused, not overwritten. The remote is the one whose URL is the PR's head repository, or `--push-remote`.
+- **After a push:** your local branch still points at the old commits, and it tells you so.
+
+```
+pr-toolbox trailers --mine --replace '^Co-Authored-By: Claude' 'Assisted-by: Claude Code'          # look
+pr-toolbox trailers --mine --replace '^Co-Authored-By: Claude' 'Assisted-by: Claude Code' --push   # then push
+```
 
 ## `motion`: a map for maintainers
 
@@ -267,11 +302,13 @@ The built-in [`openemr`](pr_toolbox/presets/openemr.json) profile is what the to
 
 - **`motion`**: twelve areas with targets quoted from `AGENTS.md` and the maintainers' issues, the patterns each plan retires, how each plan cuts its remaining work, OpenEMR's shared-name kinds (routes, tables, upgrade columns, list ids, global settings, menu ids, events), FHIR resources as semantic anchors, the PHP symbol reader, and controls drawn from real open PRs. Access-control code is left out.
 
-OpenEMR asks that AI-assisted commits say so, for example:
+OpenEMR's `AGENTS.md` and `CONTRIBUTING.md` ask that commits an AI helped write carry an `Assisted-by` trailer naming the tool (`CONTRIBUTING.md` also names `Generated-By`). Not every commit needs one, so the profile requires none. To check your own branch, match either spelling:
 
 ```
-pr-toolbox check --require-trailer '^Assisted-by: ' --forbid-trailer '^Co-Authored-By: Claude'
+pr-toolbox check --require-trailer '(?i)^(Assisted|Generated)-by: '
 ```
+
+The profile has no `trailers` rules. As of 2026-10-20, `CONTRIBUTING.md` says to remove `Skip-Slow-Tests` and `skip-ci` trailers before merge. But CI stopped reading `Skip-Slow-Tests` when it was reverted on 2026-01-12, and reads `Test-Mode: full` instead (`.github/workflows/test-all.yml`). A rule taken from that page would check a trailer nothing uses.
 
 ## Running them on a schedule
 

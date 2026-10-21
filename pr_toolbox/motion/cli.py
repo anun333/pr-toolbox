@@ -116,6 +116,7 @@ def build(target: common.Target, args: argparse.Namespace) -> int:
     profile = resolve_profile(target, args)
     (cache / "profile.json").write_text(json.dumps(profile, indent=1))
     os.environ["WIM_PROFILE"] = str(cache / "profile.json")
+    os.environ["WIM_THREADS"] = str(max(1, args.threads))
     if args.master:
         os.environ["WIM_MASTER"] = args.master
     py, repo, threads, start = sys.executable, str(target.repo), args.threads, time.time()

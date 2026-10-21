@@ -25,7 +25,9 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from itertools import combinations
 from pathlib import Path
 
@@ -51,6 +53,45 @@ def git(*args, check=True):
 
 
 MASTER_SHA = git("rev-parse", MASTER).stdout.strip()
+SECONDS, _t = {}, [time.time()]
+
+
+THREADS = max(1, int(os.environ.get("WIM_THREADS", "1")))
+POOL = ThreadPoolExecutor(max_workers=THREADS)
+
+
+def pmap(fn, items):
+    """fn over items on THREADS threads (git does the work in subprocesses), results in order."""
+    items = list(items)
+    return list(POOL.map(fn, items)) if THREADS > 1 and len(items) > 1 else [fn(x) for x in items]
+
+
+def read_blobs(rev, paths):
+    """path -> text at rev, for many files through one git cat-file process."""
+    paths = sorted(set(paths))
+    if not paths:
+        return {}
+    data = subprocess.run(["git", "-C", str(REPO), "cat-file", "--batch"], input="".join(f"{rev}:{x}\n" for x in paths).encode(),
+                          capture_output=True).stdout
+    out, i = {}, 0
+    for x in paths:
+        nl = data.index(b"\n", i)
+        header, i = data[i:nl].decode(), nl + 1
+        if header.endswith("missing"):
+            out[x] = ""
+            continue
+        size = int(header.split()[2])
+        out[x] = data[i:i + size].decode("utf-8", "replace")
+        i += size + 1
+    return out
+
+
+def mark(stage):
+    """How long the stage that just ended took, for the summary."""
+    now = time.time()
+    SECONDS[stage] = round(now - _t[0], 1)
+    _t[0] = now
+
 
 # Names two PRs can both add are read from these paths' added lines, for every PR, large ones included.
 NAME_PATHS = P["name_paths"]
@@ -131,6 +172,7 @@ cache.write_text(json.dumps(prs))
 mass = sorted(n for n, e in prs.items() if len(e["files"]) > MASS)
 normal = [n for n in NUMBERS if n not in mass]
 
+mark("pr diffs")
 # --- 2. Symbols of every base and head version, by PHP's tokenizer (only blobs not read before) -----------
 blobs = {i[k] for e in prs.values() for i in e["php"].values() for k in ("base_blob", "head_blob") if k in i} \
     if P["symbols"] == "php" else set()  # no symbol reader for the project's language: the symbol checks find nothing
@@ -270,6 +312,7 @@ for n in normal:
         if (kind, name) not in head_defs:
             removed[n].add((kind, name, path))
 
+mark("symbols")
 # --- 3. Each PR onto master, then pairs; cached by master and the PRs' head commits ---------------------
 VRULE, CRULE = P.get("version_claims"), P.get("exact_caps")  # the profile's rules; either may be absent
 
@@ -304,7 +347,7 @@ pr_paths = {n: set(prs[n]["files"]) | {f["old"] for f in prs[n]["files"].values(
 touches_moved = lambda *ns: bool(moved) and any(pr_paths[n] & moved for n in ns)
 INCREMENTAL = {"master_from": prev_master, "master_to": MASTER_SHA, "files_changed_on_master": None if moved is None else len(moved),
                "prs_merged_again": 0, "prs_reused": 0, "pairs_merged_again": 0, "pairs_reused": 0, "rechecks": 0, "rule_violations": []}
-entries = {}
+entries, todo = {}, []
 for n in normal:
     key = f"{n}:{HEADS[n]}"
     e = onmaster["prs"].get(key)
@@ -312,27 +355,29 @@ for n in normal:
         e.setdefault("master", prev_master)
     stale_and_touched = e is not None and e["master"] != MASTER_SHA and touches_moved(n)
     if e is None or stale_and_touched or (e["master"] == MASTER_SHA and not alive(e["commit"])):
-        commit, files = merged(REPO, MASTER_SHA, f"refs/pr/{n}")
-        e = {"commit": commit, "conflicts": files, "master": MASTER_SHA}
-        INCREMENTAL["prs_merged_again"] += 1
+        todo.append(n)
     else:
         INCREMENTAL["prs_reused"] += 1
-    entries[key] = e
+        entries[key] = e
+for n, (commit, files) in zip(todo, pmap(lambda n: merged(REPO, MASTER_SHA, f"refs/pr/{n}"), todo)):
+    entries[f"{n}:{HEADS[n]}"] = {"commit": commit, "conflicts": files, "master": MASTER_SHA}
+    INCREMENTAL["prs_merged_again"] += 1
 onmaster = {"master": MASTER_SHA, "prs": entries}
 
 
-def current_commit(n):
-    """n merged onto today's master; re-merges a result reused from an earlier master and checks it agrees."""
-    e = onmaster["prs"][f"{n}:{HEADS[n]}"]
-    if e["master"] != MASTER_SHA or not alive(e["commit"]):
-        commit, files = merged(REPO, MASTER_SHA, f"refs/pr/{n}")
+def refresh(ns):
+    """Re-merge, in parallel, every result in ns reused from an earlier master, checking each agrees."""
+    stale = [n for n in sorted(ns) if onmaster["prs"][f"{n}:{HEADS[n]}"]["master"] != MASTER_SHA
+             or not alive(onmaster["prs"][f"{n}:{HEADS[n]}"]["commit"])]
+    for n, (commit, files) in zip(stale, pmap(lambda n: merged(REPO, MASTER_SHA, f"refs/pr/{n}"), stale)):
+        e = onmaster["prs"][f"{n}:{HEADS[n]}"]
         INCREMENTAL["rechecks"] += 1
         if sorted(files) != sorted(e["conflicts"]):
             INCREMENTAL["rule_violations"].append({"pr": n, "was": e["conflicts"], "now": files})
         e.update({"commit": commit, "conflicts": files, "master": MASTER_SHA})
-    return e["commit"]
 
 
+mark("each PR onto the base")
 onto = {n: onmaster["prs"][f"{n}:{HEADS[n]}"]["commit"] for n in normal}  # truthy when it merged cleanly
 mconf = {n: set(onmaster["prs"][f"{n}:{HEADS[n]}"]["conflicts"]) for n in normal}
 
@@ -350,14 +395,10 @@ for t, ns in by_unit.items():
             pairs_same[(a, b)].add(f"{t[0]} {t[1]}")
 
 # PHPStan's exact caps: each PR merged onto master alone, then clean pairs that both touch the caps or baselines
+mark("setup")
 MASTER_CAPS = caps(MASTER_SHA)
 CAPS_DIR = CRULE["counted"].split("{name}")[0] if CRULE else None
 touches_caps = {n for n in normal if CRULE and any(f == CRULE["file"] or f.startswith(CAPS_DIR) for f in prs[n]["files"])}
-for n in sorted(touches_caps):
-    if onto[n]:
-        bad = sorted(caps(current_commit(n)) - MASTER_CAPS)
-        if bad:
-            findings["caps_alone"][n] = bad
 
 by_file = defaultdict(set)
 for n in normal:
@@ -389,6 +430,7 @@ def pair_still_holds(a, b, old):
     return not (onto[a] and onto[b]) and not touches_moved(a) and not touches_moved(b)
 
 
+todo_pairs = []
 for a, b in sorted(share):
     key = f"{a}:{HEADS[a]},{b}:{HEADS[b]}"
     old = pairs["pairs"].get(key)
@@ -396,30 +438,49 @@ for a, b in sorted(share):
         old.setdefault("master", pairs.get("master"))
         fresh[key] = old
         INCREMENTAL["pairs_reused"] += 1
-        continue
-    INCREMENTAL["pairs_merged_again"] += 1
+    else:
+        todo_pairs.append((a, b, key))
+
+# every commit the caps checks and pair merges start from must be today's master's: re-merge stale ones once
+caps_prs = sorted(n for n in touches_caps if onto[n])
+refresh(set(caps_prs) | {a for a, b, _ in todo_pairs if onto[a] and onto[b]})
+commit_of = lambda n: onmaster["prs"][f"{n}:{HEADS[n]}"]["commit"]
+for n, bad in zip(caps_prs, pmap(lambda n: sorted(caps(commit_of(n)) - MASTER_CAPS), caps_prs)):
+    if bad:
+        findings["caps_alone"][n] = bad
+mark("caps alone")
+
+
+def pair_entry(t):
+    a, b, _ = t
     if onto[a] and onto[b]:
-        commit, files = merged(REPO, current_commit(a), f"refs/pr/{b}")
+        commit, files = merged(REPO, commit_of(a), f"refs/pr/{b}")
         entry = {"how": "onto master", "files": files, "master": MASTER_SHA}
         if commit and a in touches_caps and b in touches_caps:
             alone = set(findings["caps_alone"].get(a, [])) | set(findings["caps_alone"].get(b, []))
             entry["caps"] = sorted(caps(commit) - MASTER_CAPS - alone)
-    else:
-        # one needs a rebase first: merge the branches directly, and leave out what either conflicts on with master
-        r = git("merge-tree", "--write-tree", "--name-only", f"refs/pr/{a}", f"refs/pr/{b}")
-        files = conflicted_files(r.stdout.strip().splitlines()[1:]) if r.returncode == 1 else []
-        entry = {"how": "branch to branch", "files": [f for f in files if f not in mconf[a] | mconf[b]], "master": MASTER_SHA}
+        return entry
+    # one needs a rebase first: merge the branches directly, and leave out what either conflicts on with master
+    r = git("merge-tree", "--write-tree", "--name-only", f"refs/pr/{a}", f"refs/pr/{b}")
+    files = conflicted_files(r.stdout.strip().splitlines()[1:]) if r.returncode == 1 else []
+    return {"how": "branch to branch", "files": [f for f in files if f not in mconf[a] | mconf[b]], "master": MASTER_SHA}
+
+
+for (a, b, key), entry in zip(todo_pairs, pmap(pair_entry, todo_pairs)):
     fresh[key] = entry
+    INCREMENTAL["pairs_merged_again"] += 1
+fresh = dict(sorted(fresh.items()))
 pairs["pairs"] = fresh
 pairs["master"] = MASTER_SHA
 pair_cache.write_text(json.dumps(pairs))
 onmaster_cache.write_text(json.dumps(onmaster))
-for key, v in pairs["pairs"].items():
+for key, v in sorted(pairs["pairs"].items()):
     if v.get("caps"):
         a, b = (int(x.split(":")[0]) for x in key.split(","))
         findings["caps_pairs"].append({"prs": [a, b], "caps": v["caps"]})
 
 # v_database: the number each PR's head claims, when it changes it; PRs changing SQL without changing it
+mark("pairs")
 master_claim = version_claim(REPO, MASTER_SHA, VRULE) if VRULE else None
 claims, no_bump = {}, []
 NO_BUMP = re.compile(P["no_bump_re"]) if P.get("no_bump_re") else None
@@ -459,6 +520,7 @@ for (a, b), units_ in sorted(pairs_same.items()):
     if not conflicts.get((a, b), {}).get("files"):
         findings["same_method"].append({"prs": [a, b], "where": sorted(units_)})
 
+mark("version claims and upgrade files")
 # one PR built on another: the first's head is an ancestor of the second's, so merging the second merges both
 heads = {}
 
@@ -471,16 +533,37 @@ def head_blobs(n):
     return heads[n]
 
 
-for a, b in sorted(share):
+stacked_cache = W / "stacked.json"
+stacked_seen = json.loads(stacked_cache.read_text()) if stacked_cache.exists() else {}
+stacked_now = {}
+
+
+def stacked_pair(t):
+    a, b = t
+    found = []
     for x, y in ((a, b), (b, a)):
         if subprocess.run(["git", "-C", str(REPO), "merge-base", "--is-ancestor", f"refs/pr/{x}", f"refs/pr/{y}"]).returncode == 0:
-            findings["stacked"].append({"contained": x, "in": y, "how": "built on it"})
+            found.append({"contained": x, "in": y, "how": "built on it"})
         else:
             # carries it by content: every file x changes has x's version in y (version files and baselines aside)
             xs = {p: s for p, s in head_blobs(x).items() if not MECHANICAL.match(p)}
             if xs and all(head_blobs(y).get(p) == s for p, s in xs.items()):
-                findings["stacked"].append({"contained": x, "in": y, "how": "carries its files"})
+                found.append({"contained": x, "in": y, "how": "carries its files"})
+    return found
 
+
+todo_stacked = [(a, b) for a, b in sorted(share) if f"{a}:{HEADS[a]},{b}:{HEADS[b]}" not in stacked_seen]
+for n in {x for t in todo_stacked for x in t}:
+    head_blobs(n)  # fill the cache before threads read it
+for (a, b), found in zip(todo_stacked, pmap(stacked_pair, todo_stacked)):
+    stacked_seen[f"{a}:{HEADS[a]},{b}:{HEADS[b]}"] = found
+for a, b in sorted(share):
+    key = f"{a}:{HEADS[a]},{b}:{HEADS[b]}"
+    stacked_now[key] = stacked_seen[key]
+    findings["stacked"].extend(stacked_seen[key])
+stacked_cache.write_text(json.dumps(stacked_now))
+
+mark("stacked")
 # files one PR deletes or moves away that another changes
 for a in normal:
     gone = {f["old"]: (path if f["status"] == "R" else None) for path, f in prs[a]["files"].items() if f["status"] in "DR"}
@@ -493,20 +576,67 @@ for a in normal:
                                                 "mechanical": all(MECHANICAL.match(p) for p in hit),
                                                 "moved_to": {p: gone[p] for p in hit if gone[p]}})
 
+mark("deleted and same method")
 # removed symbols called in another PR's added lines, when master defines the name nowhere the remover leaves
-elsewhere_cache = {}
+def grep_lines(pattern, *paths):
+    """(path, text) of each line on master matching an extended regex: "<sha>:<path>:<line>:<text>"."""
+    out = []
+    for l in git("grep", "-n", "-E", pattern, MASTER_SHA, "--", *paths).stdout.splitlines():
+        parts = l.split(":", 3)
+        if len(parts) == 4:
+            out.append((parts[1], parts[3]))
+    return out
+
+
+# where master defines each class, and each function or method, by name: one pass instead of one search per name
+DEFINED = {"class": defaultdict(set), "function": defaultdict(set)}
+if P["symbols"] == "php":
+    for path, text in grep_lines(r"^\s*(final\s+|abstract\s+|readonly\s+)*(class|interface|trait|enum)\s+[A-Za-z_][A-Za-z0-9_]*", "*.php"):
+        m = re.match(r"^\s*(?:final\s+|abstract\s+|readonly\s+)*(?:class|interface|trait|enum)\s+(\w+)", text)
+        if m:
+            DEFINED["class"][m.group(1)].add(path)
+    for path, text in grep_lines(r"function\s+&?[A-Za-z_][A-Za-z0-9_]*\s*\(", "*.php"):
+        for m in re.finditer(r"function\s+&?(\w+)\s*\(", text):
+            DEFINED["function"][m.group(1)].add(path)
 
 
 def defined_elsewhere(kind, short, keep_out):
-    key = (kind, short)
-    if key not in elsewhere_cache:
-        if kind == "class":
-            pat = rf"^\s*(final\s+|abstract\s+|readonly\s+)*(class|interface|trait|enum)\s+{short}\b"
-        else:
-            pat = rf"function\s+&?{short}\s*\("
-        out = git("grep", "-lE", pat, MASTER_SHA, "--", "*.php").stdout.split()
-        elsewhere_cache[key] = {p.split(":", 1)[1] for p in out}
-    return elsewhere_cache[key] - keep_out
+    return DEFINED["class" if kind == "class" else "function"].get(short, set()) - keep_out
+
+
+def master_callers(wanted):
+    """{(kind, symbol): files on master with a non-comment line using it}, from one search per kind, chunked."""
+    shapes = {"class": (r"(new\s+|extends\s+|implements\s+|instanceof\s+|\\)({names})\b|\b({names})::",
+                        lambda s: rf"(new\s+|extends\s+|implements\s+|instanceof\s+|\\){s}\b|\b{s}::"),
+              "function": (r"(^|[^A-Za-z0-9_>:$\\])({names})\s*\(", lambda s: rf"(^|[^A-Za-z0-9_>:$\\]){s}\s*\("),
+              "method": (r"({names})\s*\(", lambda s: rf"{s}\s*\(")}
+    found = defaultdict(set)
+    for kind, (shape, one) in shapes.items():
+        symbols_ = sorted({s for k, s in wanted if k == kind})
+        for i in range(0, len(symbols_), 150):
+            chunk = symbols_[i:i + 150]
+            rx = {s: re.compile(one(s)) for s in chunk}
+            for path, text in grep_lines(shape.format(names="|".join(chunk)), "*.php", ":!.phpstan"):
+                if re.match(r"\s*(\*|//|/\*|#)", text):
+                    continue
+                for s in chunk:
+                    if s.split("::")[-1] in text and rx[s].search(text):
+                        found[(kind, s)].add(path)
+    return found
+
+
+DEFS_OF = {n: {d for i in prs[n]["php"].values() for d in defined(sym(i.get("head_blob")))} for n in normal}
+NONCLASS_SHORT = {n: {d.split("::")[-1] for k, d in ds if k != "class"} for n, ds in DEFS_OF.items()}
+TEXT_AT = {}
+
+
+def text_at(b, p):
+    if (b, p) not in TEXT_AT:
+        TEXT_AT[(b, p)] = git("show", f"refs/pr/{b}:{p}").stdout
+    return TEXT_AT[(b, p)]
+
+
+vs_master = []  # (a, kind, name, path, symbol searched, a_files): looked up together once the loop is done
 
 
 for a in normal:
@@ -527,35 +657,42 @@ for a in normal:
             pat = re.compile(rf"(?:->|::){s}\s*\(")
         cls_short = name.split("::")[0] if kind == "method" else None
         for b in normal:
-            b_defs = {d for i in prs[b]["php"].values() for d in defined(sym(i.get("head_blob")))}
-            if b == a or (kind, name) in b_defs or any(d == short or d.endswith(f"::{short}") for k, d in b_defs if k != "class"):
+            if b == a or (kind, name) in DEFS_OF[b] or short in NONCLASS_SHORT[b]:
                 continue
             where = []
             for p, text in prs[b].get("added_by_file", {}).items():
                 if p in a_deleted or MECHANICAL.match(p) or short not in text or not pat.search(text):
                     continue
                 # a method call counts only where the file names the class (an import, a type, a static call)
-                if cls_short and not re.search(rf"\b{re.escape(cls_short)}\b", git("show", f"refs/pr/{b}:{p}").stdout):
+                if cls_short and not re.search(rf"\b{re.escape(cls_short)}\b", text_at(b, p)):
                     continue
                 where.append(p)
             if where:
                 findings["removed_used"].append({"removes": a, "uses": b, "symbol": name, "kind": kind, "in": path, "called_in": where})
-        # master's callers the PR doesn't update: code added to master since the PR's base
-        grep = {"class": rf"(new\s+|extends\s+|implements\s+|instanceof\s+|\\){short}\b|\b{short}::",
-                "function": rf"(^|[^A-Za-z0-9_>:$\\]){short}\s*\(",
-                "method": rf"{re.escape(cls_short or '')}::{short}\s*\(" if kind == "method" else ""}[kind]
-        a_head_methods = {d.split("::")[-1] for i in prs[a]["php"].values() for k, d in defined(sym(i.get("head_blob"))) if k == "method"}
-        if grep and not (kind == "function" and short in a_head_methods):
-            # caller lines, not comments: "path:line:text" from git grep, with docblock and // lines dropped
-            lines = git("grep", "-nE", grep, MASTER_SHA, "--", "*.php", ":!.phpstan").stdout.splitlines()
-            callers = {l.split(":", 3)[1] for l in lines if len(l.split(":", 3)) == 4 and not re.match(r"\s*(\*|//|/\*|#)", l.split(":", 3)[3])}
-            callers = sorted(p for p in callers if p not in a_files)
-            if callers:
-                findings["removed_vs_master"].append({"removes": a, "symbol": name, "kind": kind, "in": path, "master_callers": callers[:10],
-                                                      "count": len(callers)})
+        # master's callers the PR doesn't update: code added to master since the PR's base (searched below, in one go)
+        a_head_methods = {d.split("::")[-1] for k, d in DEFS_OF[a] if k == "method"}
+        if not (kind == "function" and short in a_head_methods):
+            searched = f"{cls_short}::{short}" if kind == "method" else short
+            vs_master.append((a, kind, name, path, searched, a_files))
 
+CALLERS = master_callers({(k, s) for _, k, _, _, s, _ in vs_master})
+for a, kind, name, path, searched, a_files in vs_master:
+    callers = sorted(p for p in CALLERS.get((kind, searched), set()) if p not in a_files)
+    if callers:
+        findings["removed_vs_master"].append({"removes": a, "symbol": name, "kind": kind, "in": path, "master_callers": callers[:10],
+                                              "count": len(callers)})
+
+mark("removed symbols")
 # signature changes against an override PHP would refuse: in another PR, or on master in a file the PR leaves alone
-subclass_files = {}
+changed_classes = sorted({cls for a in normal for cls, _, _, _, _ in sigchanged[a]})
+subclass_files = defaultdict(set)
+for i in range(0, len(changed_classes), 150):
+    chunk = changed_classes[i:i + 150]
+    for path, text in grep_lines(rf"(extends|implements)\s+[^{{]*\b({'|'.join(chunk)})\b", "*.php"):
+        for cls in chunk:
+            if re.search(rf"(extends|implements)\s+[^{{]*\b{cls}\b", text):
+                subclass_files[cls].add(path)
+SUBCLASS_TEXT = read_blobs(MASTER_SHA, {p for ps in subclass_files.values() for p in ps})
 for a in normal:
     a_files = set(prs[a]["files"])
     for cls, meth, path, old, new in sigchanged[a]:
@@ -568,13 +705,10 @@ for a in normal:
                     if why:
                         findings["signature"].append({"changes": a, "overrides": b, "method": f"{cls}::{meth}", "new": new,
                                                       "override_in": pp, "override": sig, "why": why})
-        if cls not in subclass_files:
-            out = git("grep", "-lE", rf"(extends|implements)\s+[^{{]*\b{cls}\b", MASTER_SHA, "--", "*.php").stdout.split()
-            subclass_files[cls] = [p.split(":", 1)[1] for p in out]
-        for pp in subclass_files[cls]:
+        for pp in sorted(subclass_files[cls]):
             if pp in a_files:
                 continue
-            text = git("show", f"{MASTER_SHA}:{pp}").stdout
+            text = SUBCLASS_TEXT.get(pp, "")
             mm = re.search(rf"function\s+&?{meth}\s*(\((?:[^()]|\([^()]*\))*\)\s*(?::\s*[^{{;]+?)?)\s*[{{;]", text, re.S)
             if mm:
                 sig = re.sub(r"\s+", " ", mm.group(1)).strip()
@@ -583,6 +717,7 @@ for a in normal:
                     findings["signature_vs_master"].append({"changes": a, "method": f"{cls}::{meth}", "new": new,
                                                             "master_file": pp, "override": sig, "why": why})
 
+mark("signatures")
 # shared names, of the kinds the profile lists, from every PR's added lines in its name paths
 
 
@@ -616,6 +751,7 @@ for kind, vs in names.items():
         if len(ns) > 1:
             findings["shared_name"].append({"kind": kind, "name": v, "prs": sorted(ns)})
 
+mark("shared names")
 # --- 4. In motion: what each PR changes that others build on ---------------------------------------------
 motion = {}
 for n in normal:
@@ -626,9 +762,10 @@ for n in normal:
     if moved or deleted or contracts or gone:
         motion[n] = {"moved": moved, "deleted": deleted, "contracts": contracts, "removed": gone}
 
+mark("in motion")
 summary = {"master": MASTER_SHA, "open_prs": len(NUMBERS), "mass": {n: len(prs[n]["files"]) for n in mass},
            "conflict_with_master": sorted(n for n in normal if not onto[n]), "pairs_sharing_a_file": len(share),
-           "counts": {k: len(v) for k, v in findings.items()}, "incremental": INCREMENTAL}
+           "counts": {k: len(v) for k, v in findings.items()}, "incremental": INCREMENTAL, "seconds": SECONDS}
 (W / "findings.json").write_text(json.dumps({"summary": summary, **findings, "motion": motion,
                                              "master_conflicts": {n: sorted(mconf[n]) for n in normal if mconf[n]}}, indent=1))
 print(json.dumps({**summary, "conflict_with_master": len(summary["conflict_with_master"])}, indent=1))

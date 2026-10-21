@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Two findings.json files for the same master and PR heads must say the same thing. Used to prove an incremental
 rebuild equals a full one. Lists are compared as sets of JSON rows, since reused and recomputed results can come
-out in a different order; the summary's incremental counters are left out.
+out in a different order; the summary's incremental counters and timings are left out.
 
     python3 -I compare_findings.py <findings a> <findings b>
 """
@@ -22,8 +22,8 @@ def norm(v):
 
 for key in sorted(set(a) | set(b)):
     if key == "summary":
-        sa = {k: v for k, v in a[key].items() if k != "incremental"}
-        sb = {k: v for k, v in b[key].items() if k != "incremental"}
+        sa = {k: v for k, v in a[key].items() if k not in ("incremental", "seconds")}
+        sb = {k: v for k, v in b[key].items() if k not in ("incremental", "seconds")}
         same = norm(sa) == norm(sb)
     else:
         same = norm(a.get(key)) == norm(b.get(key))

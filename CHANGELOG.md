@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **A Decidim profile** (`decidim/decidim`, base `develop`), picked automatically for that repository. It reads CI as run when a `Lint code` check is there, which runs on every PR, while each module's tests run only when its files change. Its mechanical files are the lockfiles, `RELEASE_NOTES.md`, the RuboCop to-do list, `i18n-tasks.yml` and the locale files Crowdin manages. Its shared names are migration classes, new tables, content blocks, `Decidim::Env` variables and `Decidim` settings. It has three controls, each reproduced by hand with `git merge-tree`. It has no areas yet, and the page says so instead of showing an empty section.
+- **`motion`: PRs aimed at another branch are named, not compared.** A release branch's backport merges onto that branch; merged onto the base it carried every commit between the two. On Decidim that made two backports of 2,000+ files each and nine false shared names. They are now listed under the page's limits, and the "since the last build" panel shows a PR retargeted to another branch as such, not as closed. On Decidim the findings are otherwise the same as before; every open OpenEMR PR targets `master`, so its page is unchanged.
+- **`motion`: "closed without merging" needs GitHub to say closed.** The "since the last build" panel asked only whether a PR that left the list was merged, so a PR still open read as closed.
+- **`motion`: GitHub's limits, met rather than trusted.**
+  - **Timeouts:** a page of PRs with many checks each can run past GitHub's 10-second limit (25 Decidim PRs took 9.8s). A page that fails is asked for again at half the size.
+  - **Short searches:** under load, search can end a window early with no error, on a page whose count reads 0, the first page included. The maintainers it found changed from one build to the next. A window now counts only when every page gives the same count and that many merges came back. Otherwise it is read again, then halved, and a single day that stays short stops the build. Decidim's year of merges now matches the REST search's total exactly (1,914).
+
 ## 0.7.0 (2026-10-22)
 
 - **`motion`: gaps in conformance, by the kind of evidence.** Each standard in the conformance lens now says:

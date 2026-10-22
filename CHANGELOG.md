@@ -1,7 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 (2026-10-22)
 
+- **`motion`: a conformance lens.** A profile's `motion.conformance` lists the outside standards the project answers to (certification criteria, rules), each with the code paths that carry it, the official tool that tests it and whether that tool can run on a PR before merge, what a pending rule would do to it, and short cited guidance. The page gains a Conformance section with one folded entry per standard and the open PRs touching it, a Standards panel on each PR card, a "Touches a certified criterion" triage filter, and standards in path lookups. It says what a PR touches, not whether it conforms.
+  - **Controls stop a bad build:** every path prefix must match a file on the base branch, each control's files and title must match exactly the standards it expects (a docs-only change none), and a control naming an open PR must match that PR. A control naming a PR that has closed is reported, not failed.
+  - **The OpenEMR profile** lists the criteria OpenEMR 8 is certified for, from OpenEMR's own wiki (not yet checked against CHPL, which refused the requests), with the HTI-5 proposal's action for each (proposed, not final, as of 2026-10-22), plus three it isn't certified for but implements: public-health HL7 v2, e-prescribing, and Section 504 accessibility for patient-facing pages. Every mapping is marked provisional, and the privacy and security criteria are labelled for the maintainers' review, never analysed.
 - **`motion`: "CI not run" when the real CI never started.** GitHub holds the Actions workflows of a first-time contributor's fork PR until a maintainer approves them; until then the head carries only app checks (DCO, CodeRabbit, auto-merge), and "nothing failing" read as passing. A profile's `motion.ci_required` names a check that shows CI ran; without a match the PR reads "CI not run" and stays out of "Nothing blocking". A failing check still reads as failing, and a profile without the key reads CI as before. The OpenEMR profile sets `^(PR Title|phpstan|Rector PHP Analysis)\b`, present on all 216 open PRs whose CI ran and none of the 85 whose CI didn't (2026-10-21). In that morning's build, 27 of 77 "Nothing blocking" PRs had never run CI.
 
 ## 0.5.0 (2026-10-21)

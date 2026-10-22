@@ -289,6 +289,20 @@ for s in out_streams:
     for x in s["inflight"]:
         stream_of[x["n"]].append(s["id"])
 
+# --- conformance: the outside standards each PR touches; its controls stop the build when they fail -------
+sys.path.insert(0, str(HERE))
+import conformance  # noqa: E402
+CONF = P.get("conformance") or {"specs": []}
+conf_prs = {n: {"files": pr_files.get(n, []), "title": m["title"]} for n, m in meta.items() if n not in skip}
+conf_fail, conf_notes = conformance.check(CONF, git("ls-tree", "-r", "--name-only", MASTER).splitlines(), conf_prs)
+for note in conf_notes:
+    print(f"conformance: {note}", file=sys.stderr)
+if conf_fail:
+    (W / "conformance-controls.json").write_text(json.dumps(conf_fail, indent=1))
+    print(f"{len(conf_fail)} conformance control(s) failed; see {W / 'conformance-controls.json'}", file=sys.stderr)
+    sys.exit(2)
+conf_specs, conf_of = conformance.build(CONF, conf_prs, set(mass))
+
 vc = findings["version_claims"]
 claim_of = {int(k): v for k, v in vc["claims"].items()}
 shared_claim = {int(n): int(c) for c, ns in vc["shared"].items() for n in ns}
@@ -329,7 +343,7 @@ for n, m in meta.items():
            "mass": n in mass, "rebase": n in needs_rebase, "rebase_files": master_conf.get(n, [])[:8],
            "conflicts": conf_with.get(n, []), "interacts": interacts,
            "breaks": sum(1 for i in interacts if BREAK.match(i["what"])),
-           "streams": stream_of.get(n, []), "fixes": refs.get(n, {}).get("fixes", []),
+           "streams": stream_of.get(n, []), "conf": conf_of.get(n, []), "fixes": refs.get(n, {}).get("fixes", []),
            "ci": e.get("ci"), "ci_failing": e.get("ci_failing") or [], "reviews": reviews, "maint": maint[-1]["state"] if maint else "",
            "maint_by": maint[-1]["by"] if maint else "",
            "dir": direction, "against": sorted(k for k, (a, r) in direction.items() if a > r),
@@ -353,6 +367,8 @@ data = {
               "mass": mass, "tags": [tag_info[t] for t in TAGS]},
     "general": streams["general"], "rules_package": streams["rules_package"],
     "streams": out_streams, "releases": releases,
+    "conformance": {**{k: v for k, v in CONF.items() if k not in ("specs", "controls", "_about")}, "specs": conf_specs,
+                    "controls_passed": len(CONF.get("controls", [])) - len(conf_notes)} if CONF.get("specs") else None,
     "duplicates": {"same_issue": dups, "shared_names": findings["shared_name"],
                    "stacked": findings["stacked"]},
     "merge": {"needs_rebase": len(needs_rebase), "needs_rebase_mechanical_only": rebase_mech,

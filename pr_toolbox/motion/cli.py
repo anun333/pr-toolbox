@@ -60,6 +60,7 @@ DEFAULTS = {
     "invited_labels": ["help wanted", "help-wanted", "good first issue"],
     "streams": None,                    # areas, quoted targets, plan issues, retired patterns (a file or an object)
     "controls": None,                   # known cases each check must find (a file or a list)
+    "conformance": None,                # outside standards each PR touches: specs, their paths and tools, controls (a file or an object)
     "method_notes": [],
     "release_symbols": None,            # {"functions": [...], "classes": [...], "pages_re": ...}: what each release removed
 }
@@ -72,7 +73,7 @@ def resolve_profile(target: common.Target, args: argparse.Namespace) -> dict:
     owner, name = target.github.split("/")
     motion["project"] = motion["project"] or name
     motion["title"] = motion["title"] or f"{motion['project']} Work in Motion"
-    for key in ("streams", "controls"):
+    for key in ("streams", "controls", "conformance"):
         value = motion[key]
         if isinstance(value, str):  # a file: next to the built-in presets, or relative to the checkout
             path = PRESETS / value if (PRESETS / value).exists() else target.repo / value
@@ -82,6 +83,8 @@ def resolve_profile(target: common.Target, args: argparse.Namespace) -> dict:
         motion["streams"] = {"general": [], "rules_package": None, "streams": []}
     if motion["controls"] is None:
         motion["controls"] = {"controls": []}
+    if motion["conformance"] is None:
+        motion["conformance"] = {"specs": [], "process": [], "controls": []}
     vc, caps = target.config.get("version_claims"), target.config.get("exact_caps")
     if motion["mechanical"] is None:
         # files the version-claim and caps rules name are the mechanical ones

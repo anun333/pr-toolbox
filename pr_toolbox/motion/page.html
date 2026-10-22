@@ -211,7 +211,7 @@ table.triage td.t .by { color: var(--muted); font-size: 0.82rem; }
   </header>
 
   <nav class="toc" aria-label="Sections">
-    <a href="#lookup">Look up</a><a href="#path">Path forward</a><a href="#triage">Triage</a><a href="#start">Before you start</a><a href="#areas">Areas</a><a href="#twice">Same work twice</a><a href="#merge">Merge view</a><a href="#releases">Releases</a><a href="#method">Method and limits</a>
+    <a href="#lookup">Look up</a><a href="#path">Path forward</a><a href="#triage">Triage</a><a href="#start">Before you start</a><a href="#areas">Areas</a><a href="#conformance" id="toc-conformance">Conformance</a><a href="#twice">Same work twice</a><a href="#merge">Merge view</a><a href="#releases">Releases</a><a href="#method">Method and limits</a>
   </nav>
 
   <section class="glance" id="glance" aria-label="At a glance">
@@ -264,6 +264,12 @@ table.triage td.t .by { color: var(--muted); font-size: 0.82rem; }
     <div class="band-head"><span class="eyebrow">Areas</span><h2>Where the code is going</h2>
       <p class="muted">Each area: the target as its owners wrote it, what to know before building there, the issues that plan it, the open PRs changing it, and counts taken from each release.</p></div>
     <div class="stack" id="area-list"></div>
+  </section>
+
+  <section class="band" id="conformance">
+    <div class="band-head"><span class="eyebrow">Conformance</span><h2 id="conf-heading">The standards the project answers to</h2>
+      <p class="muted">Each standard: whether it is certified, the code that carries it, the official tool that tests it and whether that can run before a merge, what the pending rule would change, and the open PRs touching it. Matched by files and titles, so it says what a PR touches, not whether it conforms.</p></div>
+    <div class="stack" id="conf-list"></div>
   </section>
 
   <section class="band" id="twice">
@@ -466,6 +472,46 @@ function capsPanel(m) {
     <p class="muted">Caps in <code>${esc(PF.caps_file)}</code> must equal the baseline's entry counts exactly. Two PRs that each lower one cap pass alone and fail together; each clean pair that touches the caps or baselines was merged and counted.</p>
     <span class="eyebrow">Fail when merged alone onto ${esc(BASE)}</span>${alone ? `<ul class="plain">${alone}</ul>` : "<p>None.</p>"}
     <span class="eyebrow">Pass alone, fail together</span>${pairs ? `<ul class="plain">${pairs}</ul>` : "<p>None.</p>"}</div>`;
+}
+
+/* the conformance lens: outside standards, the code that carries each, its test tool and the pending rule */
+const CONF = MAP.conformance;
+const CONF_BY_ID = Object.fromEntries(((CONF && CONF.specs) || []).map((s) => [s.id, s]));
+const ruleText = (h) => !h ? "" : `${h.action}${h.when ? ` on ${h.when}` : ""}`;
+/* a pill stays short (pills don't wrap); the date or condition follows as plain text */
+const rulePill = (h) => !h ? "" : `<span class="pill ${h.action === "kept" ? "ok" : h.action === "removed" ? "mech" : "info"}">${esc((CONF.rule?.name || "rule") + ": " + h.action)}</span>${h.when ? ` <span class="muted">on ${esc(h.when)}</span>` : ""}`;
+const toolLine = (t) => !t ? "" : `${t.url ? `<a href="${esc(t.url)}">${esc(t.name)}</a>` : esc(t.name)} · ${t.before_merge ? '<span class="pill ok">can run on a PR before merge</span>' : '<span class="pill mech">not run on PRs before merge</span>'}${t.note ? ` <span class="muted">${linkNums(t.note)}</span>` : ""}`;
+function renderConformance() {
+  if (!CONF) { $("#conformance").hidden = true; $("#toc-conformance").hidden = true; return; }
+  if (CONF.heading) $("#conf-heading").textContent = CONF.heading;
+  const src = CONF.source, rule = CONF.rule;
+  const head = `<div class="panel"><ul class="plain">
+    ${src ? `<li><b>${esc(src.certification)}.</b> The criteria come from <a href="${esc(src.url)}">${esc(src.criteria_from)}</a>${src.chpl ? ` (<a href="${esc(src.chpl)}">CHPL listing</a>)` : ""}, checked ${esc(src.checked)}.</li>` : ""}
+    ${rule ? `<li><b>${esc(rule.name)}, ${esc(rule.state)}:</b> ${esc(rule.text)} <a href="${esc(rule.url)}">The proposed rule</a>${rule.summary_url ? `, <a href="${esc(rule.summary_url)}">its overview</a>` : ""}; checked ${esc(rule.checked)}.</li>` : ""}
+    <li class="muted">The code paths are this map's reading of the code (each marked provisional), checked by controls that ran before this page was built. Privacy and security criteria are labelled so PRs reach their reviewers; this map doesn't analyse them.</li></ul></div>`;
+  const specs = CONF.specs.map((s) => {
+    const facts = [s.certified ? "certified" : s.kind, `${s.inflight.length} open PR${s.inflight.length === 1 ? "" : "s"}`, s.hti5 ? `${CONF.rule?.name || "rule"}: ${ruleText(s.hti5)}` : "", s.deadline ? `deadline ${s.deadline.split(" ")[0]}` : ""].filter(Boolean).join(" · ");
+    const li = (html) => `<li>${html}</li>`;
+    const body = `<ul class="plain">
+      ${li(`${s.certified ? '<span class="pill ok">certified</span>' : '<span class="pill info">not certified</span>'} <span class="muted">${esc(s.kind || "")}${s.mapping === "provisional" ? " · mapping provisional" : ""}</span>`)}
+      ${(s.standards || []).length ? li(`Standards: ${s.standards.map(esc).join(" · ")}${s.standards_source ? ` <span class="muted">(${esc(s.standards_source)})</span>` : ""}`) : ""}
+      ${s.relied_upon ? li(`Relied-upon software: ${esc(s.relied_upon)}`) : ""}
+      ${li(`Tested with ${toolLine(s.tool)}`)}
+      ${s.hti5 ? li(`${rulePill(s.hti5)}${s.hti5.note ? ` <span class="muted">${esc(s.hti5.note)}</span>` : ""}`) : ""}
+      ${s.deadline ? li(`<span class="pill info">deadline</span> ${esc(s.deadline)}${s.url ? ` · <a href="${esc(s.url)}">source</a>` : ""}`) : ""}
+      ${s.security_note ? li(`<span class="pill mech">security review</span> ${esc(s.security_note)}`) : ""}
+      ${s.note ? li(`<span class="muted">${esc(s.note)}</span>`) : ""}
+      ${li(`Code: ${(s.paths || []).map((p) => `<code>${esc(p)}</code>`).join(" ") || '<span class="muted">matched by title only</span>'}`)}</ul>
+      ${(s.guidance || []).length ? `<div class="stack" style="gap:var(--s2)"><span class="eyebrow">What the standard asks</span><ul class="plain">${s.guidance.map((g) => li(`${esc(g.text)} <span class="muted">· <a href="${esc(g.url)}">${esc(g.source)}</a></span>`)).join("")}</ul></div>` : ""}
+      <div class="stack" style="gap:var(--s2)"><span class="eyebrow">Open PRs touching it</span>${s.inflight.length ? more(s.inflight, 6, (x) => prLine(x.n, `<div class="muted" style="font-size:.78rem">matched by: ${esc(x.why.join(", "))}</div>`)) : '<p class="muted">None open.</p>'}</div>`;
+    return `<details class="fold std" id="conf-${esc(s.id)}"><summary><h3>${esc(s.label)} ${esc(s.title)}</h3><span class="facts">${esc(facts)}</span></summary><div class="fold-in">${body}</div></details>`;
+  }).join("");
+  const process = (CONF.process || []).length ? `<div class="panel"><h4>Certified, with no files matched</h4><p class="muted">${esc(CONF.process_note || "")}</p><ul class="plain">${CONF.process.map((x) => `<li><b>${esc(x.label)}</b> ${esc(x.title)} ${rulePill(x.hti5)}</li>`).join("")}</ul></div>` : "";
+  /* one line until opened, like each area: a card's link into a standard opens this and the standard */
+  const certified = CONF.specs.filter((s) => s.certified);
+  const touching = Object.values(MAP.prs).filter((p) => (p.conf || []).some((id) => CONF_BY_ID[id]?.certified)).length;
+  const line = [`${CONF.specs.length} standards (${certified.length} certified)`, `${touching} open PRs touch a certified criterion`, CONF.rule ? `${CONF.rule.name} ${CONF.rule.state}` : ""].filter(Boolean).join(" · ");
+  $("#conf-list").innerHTML = `<details class="fold" id="conf-index"><summary><h3>Every standard</h3><span class="facts">${esc(line)}</span></summary><div class="fold-in stack">${head}${specs}${process}</div></details>`;
 }
 
 function renderReleases() {
@@ -729,6 +775,7 @@ function prCard(n, p) {
       ${li(`<span class="mono">+${p.add ?? "?"} −${p.del ?? "?"}</span> in ${p.files} files${p.mass ? ' <span class="pill mech">over 150</span>' : ""}`)}
       ${li(p.tests ? `${p.tests} test file${p.tests === 1 ? "" : "s"} changed` : '<span class="muted">no test files changed</span>')}</ul></div>
     <div class="panel"><h4>Fit with the plan</h4>${dir.length ? `<ul class="plain">${dir.map(([k, [a, r]]) => li(`${a > r ? '<span class="pill conflict">adds</span>' : r > a ? '<span class="pill ok">removes</span>' : '<span class="pill info">moves</span>'} ${esc(dirLabel(k))}: <span class="mono">+${a} −${r}</span> <a href="#area-${esc(MAP.direction_labels[k]?.stream || "")}">plan</a>`)).join("")}</ul>` : '<p class="muted">Adds or removes none of the patterns the plan retires.</p>'}</div>
+    ${CONF ? `<div class="panel"><h4>Standards</h4>${(p.conf || []).length ? `<ul class="plain">${p.conf.map((id) => CONF_BY_ID[id]).filter(Boolean).map((s) => li(`<a href="#conf-${esc(s.id)}">${esc(s.label)}</a> ${esc(s.title)} ${s.certified ? '<span class="pill ok">certified</span>' : ""}${s.tool && !s.tool.before_merge ? ' <span class="pill mech">official test not run before merge</span>' : ""}${s.security ? ' <span class="pill mech">security review</span>' : ""} ${rulePill(s.hti5)}`)).join("")}</ul>` : '<p class="muted">Touches none of the listed standards.</p>'}</div>` : ""}
     <div class="panel"><h4>Merging it</h4><ul class="plain">
       ${li(`${ontoCell(p)} onto ${esc(BASE)}${p.rebase && p.rebase_files.length ? ` <span class="muted mono" style="font-size:.8rem">${esc(p.rebase_files.join(", "))}</span>` : ""}`)}
       ${li(code.length ? `<span class="pill conflict">code conflicts</span> with ${code.map((c) => `${prLink(c.n)} <span class="muted mono" style="font-size:.78rem">${esc(c.files.slice(0, 2).join(", "))}</span>`).join(", ")}` : '<span class="muted">no code conflicts with other open PRs</span>')}
@@ -776,6 +823,7 @@ const FILTERS = [
   ["nochanges", "No changes requested", (p) => p.maint !== "CHANGES_REQUESTED"],
   ["alone", "Stands alone", (p) => !p.group && !p.mass],
   ["grouped", "In a group", (p) => !!p.group],
+  ...(CONF ? [["certified", "Touches a certified criterion", (p) => (p.conf || []).some((id) => CONF_BY_ID[id]?.certified)]] : []),
 ];
 const PRESETS = [
   ["Nothing blocking", ["ready", "merges", "ci", "nochanges", "noconf", "nobreak", "plan", "version", "caps"], "age"],
@@ -869,9 +917,10 @@ function lookup(raw) {
   const top = q.split("/").slice(0, 2).join("/");
   const massHits = Object.entries(MAP.mass_dirs).filter(([, dirs]) => dirs.some((d) => d === top || d.startsWith(q) || q.startsWith(d + "/"))).map(([n]) => n);
   const areas = MAP.streams.filter((s) => (s.paths || []).some((p) => q.startsWith(p) || p.startsWith(q)));
+  const stds = ((CONF && CONF.specs) || []).filter((s) => (s.paths || []).some((p) => q.startsWith(p) || p.startsWith(q)));
   const list = [...byPr.entries()].sort((a, b) => b[1].length - a[1].length || b[0] - a[0]);
   out.innerHTML = `<h3><code>${esc(q)}</code></h3>
-    <p>${list.length} open PR${list.length === 1 ? "" : "s"} change ${hits.length} file${hits.length === 1 ? "" : "s"} here${files.length ? "" : " (matched anywhere in the path)"}.${areas.length ? ` Area: ${areas.map((s) => `<a href="#area-${esc(s.id)}">${esc(s.title)}</a>`).join(", ")}.` : ""}</p>
+    <p>${list.length} open PR${list.length === 1 ? "" : "s"} change ${hits.length} file${hits.length === 1 ? "" : "s"} here${files.length ? "" : " (matched anywhere in the path)"}.${areas.length ? ` Area: ${areas.map((s) => `<a href="#area-${esc(s.id)}">${esc(s.title)}</a>`).join(", ")}.` : ""}${stds.length ? ` Standards: ${stds.map((s) => `<a href="#conf-${esc(s.id)}">${esc(s.label)}</a>`).join(", ")}.` : ""}</p>
     ${list.length ? more(list, 12, ([n, fs]) => prLine(n, `<div class="muted mono" style="font-size:.78rem">${esc(fs.slice(0, 3).join(", "))}${fs.length > 3 ? ` +${fs.length - 3}` : ""}</div>`)) : ""}
     ${massHits.length ? `<p class="muted">Large PRs touching this folder too: ${massHits.map((n) => prLink(n) + draft(n)).join(", ")}.</p>` : ""}`;
 }
@@ -890,5 +939,5 @@ function wireLookup() {
   $("#q").value = ex[0]; lookup(ex[0]);
 }
 
-renderStamp(); renderStart(); renderAreas(); renderTwice(); renderMerge(); renderReleases(); renderMethod(); renderTriage(); renderPath(); renderGlance(); renderSince(); wireLookup(); wireFolds();
+renderStamp(); renderStart(); renderAreas(); renderConformance(); renderTwice(); renderMerge(); renderReleases(); renderMethod(); renderTriage(); renderPath(); renderGlance(); renderSince(); wireLookup(); wireFolds();
 </script>

@@ -176,7 +176,7 @@ class MotionFixture(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout)
 
 
-    def page(self, quote: str) -> subprocess.CompletedProcess:
+    def page(self, quote: str, conformance: dict | None = None) -> subprocess.CompletedProcess:
         """intent.py over the fixture's findings, with one area whose target quotes GUIDE.md."""
         g = self.tmp / "inputs"
         (g / "issues").mkdir(parents=True, exist_ok=True)
@@ -191,6 +191,8 @@ class MotionFixture(unittest.TestCase):
         profile = {**PROFILE, "streams": {"general": [], "rules_package": None, "streams": [
             {"id": "code", "title": "Code layout", "summary": "Where code goes.", "plan": [], "before": [],
              "target": [{"text": quote, "source": "GUIDE.md", "url": "https://github.com/example/app/blob/master/GUIDE.md"}]}]}}
+        if conformance is not None:
+            profile["conformance"] = conformance
         path = self.tmp / "page-profile.json"
         path.write_text(json.dumps(profile))
         return subprocess.run([sys.executable, "-I", str(MOTION / "intent.py"), str(self.repo), str(self.work), str(g),
@@ -204,6 +206,24 @@ class MotionFixture(unittest.TestCase):
         self.assertIn("<title>App Work in Motion</title>", page)
         data = json.loads((self.work / "map.json").read_text())
         self.assertEqual(data["streams"][0]["target"][0]["verified"], "verbatim")
+
+    def test_the_conformance_lens_matches_prs_and_its_controls_stop_a_bad_build(self) -> None:
+        conf = {"specs": [{"id": "std", "label": "(x)(1)", "title": "A standard", "certified": True, "paths": ["a.txt"],
+                           "tool": {"name": "a validator", "before_merge": False}, "hti5": {"action": "kept"}}],
+                "controls": [{"files": ["a.txt"], "expect": ["std"]}, {"files": ["c.txt"], "expect": []}]}
+        r = self.page("New code goes in src/, and every change needs a test.", conformance=conf)
+        self.assertEqual(r.returncode, 0, r.stderr[-1500:])
+        data = json.loads((self.work / "map.json").read_text())
+        matched = {x["n"] for x in data["conformance"]["specs"][0]["inflight"]}
+        self.assertTrue({1, 2} <= matched, matched)
+        self.assertIn("std", data["prs"]["1"]["conf"])
+        self.assertNotIn("title_re", data["conformance"]["specs"][0])
+        # a path no file on the base starts with stops the build, and so does a control that matches wrongly
+        for bad in ({**conf, "specs": [{**conf["specs"][0], "paths": ["a.txt", "nowhere/"]}]},
+                    {**conf, "controls": [{"files": ["c.txt"], "expect": ["std"]}]}):
+            r = self.page("New code goes in src/, and every change needs a test.", conformance=bad)
+            self.assertEqual(r.returncode, 2, r.stderr[-800:])
+            self.assertIn("conformance control", r.stderr)
 
     def test_groups_join_what_needs_a_decision(self) -> None:
         r = self.page("New code goes in src/, and every change needs a test.")
@@ -463,6 +483,25 @@ class Profiles(unittest.TestCase):
         self.assertTrue(p["streams"]["streams"], "OpenEMR's areas come with the preset")
         self.assertTrue(p["controls"]["controls"], "and its controls")
         self.assertTrue(all("url" in t for s in p["streams"]["streams"] for t in s["target"]), "every target cites its source")
+
+    def test_openemr_preset_carries_the_conformance_lens(self) -> None:
+        from pr_toolbox import common
+        from pr_toolbox.motion import conformance
+        cfg = common.load_config(Path("."), "openemr/openemr", preset="openemr")
+        target = common.Target(Path("."), "upstream", "openemr/openemr", "master", cfg)
+        conf = cli.resolve_profile(target, None)["conformance"]
+        certified = [s["label"] for s in conf["specs"] if s.get("certified")]
+        self.assertIn("(g)(10)", certified)
+        self.assertNotIn("(b)(3)", certified, "OpenEMR 8 isn't certified for e-prescribing")
+        self.assertTrue(all(s.get("mapping") == "provisional" for s in conf["specs"]), "until a maintainer confirms the paths")
+        self.assertTrue(all(s.get("hti5") or s.get("deadline") for s in conf["specs"]), "each says what the pending rule does")
+        self.assertTrue(conf["source"]["url"] and conf["rule"]["url"], "the criteria and the rule cite their sources")
+        # the file-and-title controls pass against the preset's own paths; controls naming PRs need them open
+        paths = [p for s in conf["specs"] for p in s.get("paths", [])]
+        base = paths + [f for c in conf["controls"] for f in c.get("files", [])]
+        failures, notes = conformance.check(conf, base, {})
+        self.assertEqual(failures, [])
+        self.assertTrue(all("no longer open" in n for n in notes))
 
     def test_the_page_names_the_release_that_built_it(self) -> None:
         from pr_toolbox import __version__, common

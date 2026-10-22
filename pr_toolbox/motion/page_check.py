@@ -163,6 +163,33 @@ def desktop(pg):
                 link.click()
                 pg.wait_for_timeout(300)
             check("a link into a folded area opens it", bool(target) and pg.eval_on_selector(f"#{target}", "d => d.open"), target)
+    # the conformance lens: a fold per standard, a matched PR's card names its standards, and the filter counts them
+    conf = MAP.get("conformance")
+    if conf:
+        folds_c = pg.eval_on_selector_all("#conf-list details.fold.std", "ds => ds.length")
+        check("conformance: a fold per standard", folds_c == len(conf["specs"]), f"{folds_c} folds, {len(conf['specs'])} standards")
+        certified = {s["id"]: s for s in conf["specs"] if s.get("certified")}
+        matched = next((n for n, p in PRS.items() if set(p.get("conf") or []) & set(certified)), None)
+        if matched:
+            pg.fill("#q", matched)
+            press(pg, "#lookup-form button", 300)
+            card = pg.inner_text("#result")
+            labels = [certified[i]["label"] for i in PRS[matched]["conf"] if i in certified]
+            # the panel heading is styled in capitals, and inner_text returns it as rendered
+            check("conformance: a matched PR's card names its standards", "standards" in card.lower() and all(x in card for x in labels), f"#{matched}: {labels}")
+            link = pg.query_selector('#result a[href^="#conf-"]')
+            target = link.get_attribute("href")[1:] if link else None
+            if link:
+                link.click()
+                pg.wait_for_timeout(300)
+            check("conformance: a link from a card opens the standard", bool(target) and pg.eval_on_selector(f"#{target}", "d => d.open"), target)
+        want = sum(1 for p in PRS.values() if set(p.get("conf") or []) & set(certified))
+        for b in pg.query_selector_all("#presets button"):
+            if b.inner_text().startswith("Clear"):
+                b.click()
+        press(pg, "#f-certified")
+        check("conformance: the filter shows every PR touching a certified criterion", count_shown(pg) == want, f"page {count_shown(pg)}, build {want}")
+        press(pg, "#f-certified")
     since = pg.inner_text("#since") if pg.query_selector("#since") else ""
     check("since the last build is shown", since.startswith("Since") or since.startswith("No earlier build"), since[:100])
     check("the header names the tool and how to rebuild", "pr-toolbox" in pg.inner_text("#stamp") and pg.query_selector("#rebuild") is not None)

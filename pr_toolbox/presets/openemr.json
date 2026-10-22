@@ -279,6 +279,7 @@
     ],
     "streams": "openemr-motion-streams.json",
     "controls": "openemr-motion-controls.json",
+    "conformance": "openemr-motion-conformance.json",
     "method_notes": [
       "Two pairs whose clash the computed checks had already found were read without being told, and both came back as clashes. A third, #10926 and #14708, which an earlier audit had called a clash, came back \"no\"; checking by hand showed the reading right (master has had those writes since #13281), and the earlier claim was corrected in public."
     ],

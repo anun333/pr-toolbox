@@ -294,14 +294,22 @@ sys.path.insert(0, str(HERE))
 import conformance  # noqa: E402
 CONF = P.get("conformance") or {"specs": []}
 conf_prs = {n: {"files": pr_files.get(n, []), "title": m["title"]} for n, m in meta.items() if n not in skip}
-conf_fail, conf_notes = conformance.check(CONF, git("ls-tree", "-r", "--name-only", MASTER).splitlines(), conf_prs)
+conf_workflows = {f: git("show", f"{MASTER}:{f}") for f in git("ls-tree", "-r", "--name-only", MASTER, "--", ".github/workflows/").splitlines()}
+# the names checks search the code for every listed name and for each control's planted one, so a matcher that
+# matched anything would find the planted name and fail its control
+conf_names = sorted({n for s in CONF.get("specs", []) for n in (s.get("names") or {}).get("names", [])}
+                    | {c["planted"] for c in CONF.get("controls", []) if "planted" in c})
+conf_where = sorted({w for s in CONF.get("specs", []) for w in (s.get("names") or {}).get("where", [])})
+conf_text = git("grep", "-h", "-o", "-E", "[\"'/](" + "|".join(re.escape(n) for n in conf_names) + ")[\"']", MASTER, "--", *conf_where) if conf_names else ""
+conf_fail, conf_notes = conformance.check(CONF, git("ls-tree", "-r", "--name-only", MASTER).splitlines(), conf_prs, conf_workflows, conf_text)
 for note in conf_notes:
     print(f"conformance: {note}", file=sys.stderr)
 if conf_fail:
     (W / "conformance-controls.json").write_text(json.dumps(conf_fail, indent=1))
     print(f"{len(conf_fail)} conformance control(s) failed; see {W / 'conformance-controls.json'}", file=sys.stderr)
     sys.exit(2)
-conf_specs, conf_of = conformance.build(CONF, conf_prs, set(mass))
+conf_reported = json.loads((G / "conformance-issues.json").read_text()) if (G / "conformance-issues.json").exists() else {}
+conf_specs, conf_of = conformance.build(CONF, conf_prs, set(mass), conf_workflows, conf_text, conf_reported, gh_issue)
 
 vc = findings["version_claims"]
 claim_of = {int(k): v for k, v in vc["claims"].items()}
@@ -367,7 +375,8 @@ data = {
               "mass": mass, "tags": [tag_info[t] for t in TAGS]},
     "general": streams["general"], "rules_package": streams["rules_package"],
     "streams": out_streams, "releases": releases,
-    "conformance": {**{k: v for k, v in CONF.items() if k not in ("specs", "controls", "_about")}, "specs": conf_specs,
+    "conformance": {**{k: v for k, v in CONF.items() if k not in ("specs", "controls", "_about", "issues")}, "specs": conf_specs,
+                    "reported": conf_reported.get("_general"),
                     "controls_passed": len(CONF.get("controls", [])) - len(conf_notes)} if CONF.get("specs") else None,
     "duplicates": {"same_issue": dups, "shared_names": findings["shared_name"],
                    "stacked": findings["stacked"]},

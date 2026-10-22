@@ -481,6 +481,22 @@ const ruleText = (h) => !h ? "" : `${h.action}${h.when ? ` on ${h.when}` : ""}`;
 /* a pill stays short (pills don't wrap); the date or condition follows as plain text */
 const rulePill = (h) => !h ? "" : `<span class="pill ${h.action === "kept" ? "ok" : h.action === "removed" ? "mech" : "info"}">${esc((CONF.rule?.name || "rule") + ": " + h.action)}</span>${h.when ? ` <span class="muted">on ${esc(h.when)}</span>` : ""}`;
 const toolLine = (t) => !t ? "" : `${t.url ? `<a href="${esc(t.url)}">${esc(t.name)}</a>` : esc(t.name)} · ${t.before_merge ? '<span class="pill ok">can run on a PR before merge</span>' : '<span class="pill mech">not run on PRs before merge</span>'}${t.note ? ` <span class="muted">${linkNums(t.note)}</span>` : ""}`;
+/* gaps, by the kind of evidence: measured on this build, reported in open issues, and known ones each citing its source */
+const noCiTest = (s) => !(s.measured?.ci || []).length;
+const searchUrl = (r) => `${GH}issues?q=${encodeURIComponent(r.query.replace(/^repo:\S+\s+/, ""))}`;
+function gapsBlock(s) {
+  const li = (html) => `<li>${html}</li>`;
+  const m = s.measured || {}, r = s.reported, known = s.known || [];
+  const ci = (m.ci || []).length
+    ? li(`<span class="pill ok">official test in CI</span> ${m.ci.map((f) => `<code>${esc(f)}</code>`).join(" ")}`)
+    : li(`<span class="pill ${s.certified ? "conflict" : "mech"}">no official test in CI</span>${s.certified_by && /attestation/i.test(s.certified_by) && !/test procedure/i.test(s.certified_by) ? ' <span class="muted">certified by attestation</span>' : ""}`);
+  const names = m.names ? li(`${m.names.missing.length ? '<span class="pill conflict">missing</span>' : '<span class="pill ok">all named</span>'} ${m.names.found} of ${m.names.total} ${esc(m.names.label)} named in the code${m.names.missing.length ? `: ${m.names.missing.map((n) => `<code>${esc(n)}</code>`).join(" ")}` : ""} <span class="muted">(${esc(m.names.source || "")}; named is not the same as conforming)</span>`) : "";
+  const rep = r && r.total != null ? li(`<a href="${esc(searchUrl(r))}">${r.total} open issue${r.total === 1 ? "" : "s"}</a> ${r.label ? `labelled <b>${esc(r.label)}</b>` : `<span class="muted">mentioning it (a keyword search, so not all are gaps)</span>`}${r.items.length ? `, newest: ${r.items.slice(0, 3).map((i) => isLink(i.number)).join(", ")}` : ""}`) : "";
+  /* the pill stays one or two words; a note carries the detail */
+  const kn = known.map((k) => li(`<span class="pill ${k.state === "closed" ? "ok" : "info"}">${esc(k.state === "closed" ? (k.pr ? "merged or closed" : "closed") : k.state === "open" ? (k.pr ? "fix open" : "open") : k.kind || "noted")}</span> ${esc(k.text)} <span class="muted">· <a href="${esc(k.url)}">${k.n ? "#" + k.n : "source"}</a>${k.note ? ` · ${esc(k.note)}` : ""}</span>`)).join("");
+  return `<div class="stack" style="gap:var(--s2)"><span class="eyebrow">Gaps, by evidence</span><ul class="plain">${ci}${names}${rep}${kn}</ul></div>`;
+}
+
 function renderConformance() {
   if (!CONF) { $("#conformance").hidden = true; $("#toc-conformance").hidden = true; return; }
   if (CONF.heading) $("#conf-heading").textContent = CONF.heading;
@@ -489,10 +505,11 @@ function renderConformance() {
     ${src ? `<li><b>${esc(src.certification)}.</b> The criteria come from <a href="${esc(src.url)}">${esc(src.criteria_from)}</a>, checked ${esc(src.checked)}.</li>` : ""}
     ${src && src.official_findings ? `<li><b>Official findings:</b> ${esc(src.official_findings)}</li>` : ""}
     ${src && src.methods ? `<li class="muted">${esc(src.methods)}</li>` : ""}
+    ${CONF.reported && CONF.reported.total != null ? `<li><a href="${esc(searchUrl(CONF.reported))}">${CONF.reported.total} open issue${CONF.reported.total === 1 ? "" : "s"}</a> labelled <b>${esc(CONF.reported.label || "")}</b>${CONF.reported.items.length ? `: ${CONF.reported.items.map((i) => isLink(i.number)).join(", ")}` : ""}</li>` : ""}
     ${rule ? `<li><b>${esc(rule.name)}, ${esc(rule.state)}:</b> ${esc(rule.text)} <a href="${esc(rule.url)}">The proposed rule</a>${rule.summary_url ? `, <a href="${esc(rule.summary_url)}">its overview</a>` : ""}; checked ${esc(rule.checked)}.</li>` : ""}
     <li class="muted">The code paths are this map's reading of the code (each marked provisional), checked by controls that ran before this page was built. Privacy and security criteria are labelled so PRs reach their reviewers; this map doesn't analyse them.</li></ul></div>`;
   const specs = CONF.specs.map((s) => {
-    const facts = [s.certified ? "certified" : s.kind, `${s.inflight.length} open PR${s.inflight.length === 1 ? "" : "s"}`, s.hti5 ? `${CONF.rule?.name || "rule"}: ${ruleText(s.hti5)}` : "", s.deadline ? `deadline ${s.deadline.split(" ")[0]}` : ""].filter(Boolean).join(" · ");
+    const facts = [s.certified ? "certified" : s.kind, s.certified && noCiTest(s) ? "no official test in CI" : "", `${s.inflight.length} open PR${s.inflight.length === 1 ? "" : "s"}`, s.hti5 ? `${CONF.rule?.name || "rule"}: ${ruleText(s.hti5)}` : "", s.deadline ? `deadline ${s.deadline.split(" ")[0]}` : ""].filter(Boolean).join(" · ");
     const li = (html) => `<li>${html}</li>`;
     const body = `<ul class="plain">
       ${li(`${s.certified ? '<span class="pill ok">certified</span>' : '<span class="pill info">not certified</span>'} <span class="muted">${esc(s.kind || "")}${s.mapping === "provisional" ? " · mapping provisional" : ""}</span>`)}
@@ -506,6 +523,7 @@ function renderConformance() {
       ${s.note ? li(`<span class="muted">${esc(s.note)}</span>`) : ""}
       ${li(`Code: ${(s.paths || []).map((p) => `<code>${esc(p)}</code>`).join(" ") || '<span class="muted">matched by title only</span>'}`)}</ul>
       ${(s.guidance || []).length ? `<div class="stack" style="gap:var(--s2)"><span class="eyebrow">What the standard asks</span><ul class="plain">${s.guidance.map((g) => li(`${esc(g.text)} <span class="muted">· <a href="${esc(g.url)}">${esc(g.source)}</a></span>`)).join("")}</ul></div>` : ""}
+      ${gapsBlock(s)}
       <div class="stack" style="gap:var(--s2)"><span class="eyebrow">Open PRs touching it</span>${s.inflight.length ? more(s.inflight, 6, (x) => prLine(x.n, `<div class="muted" style="font-size:.78rem">matched by: ${esc(x.why.join(", "))}</div>`)) : '<p class="muted">None open.</p>'}</div>`;
     return `<details class="fold std" id="conf-${esc(s.id)}"><summary><h3>${esc(s.label)} ${esc(s.title)}</h3><span class="facts">${esc(facts)}</span></summary><div class="fold-in">${body}</div></details>`;
   }).join("");
@@ -513,7 +531,8 @@ function renderConformance() {
   /* one line until opened, like each area: a card's link into a standard opens this and the standard */
   const certified = CONF.specs.filter((s) => s.certified);
   const touching = Object.values(MAP.prs).filter((p) => (p.conf || []).some((id) => CONF_BY_ID[id]?.certified)).length;
-  const line = [`${CONF.specs.length} standards (${certified.length} certified)`, `${touching} open PRs touch a certified criterion`, CONF.rule ? `${CONF.rule.name} ${CONF.rule.state}` : ""].filter(Boolean).join(" · ");
+  const untested = certified.filter(noCiTest).length;
+  const line = [`${CONF.specs.length} standards (${certified.length} certified)`, `${untested} of the ${certified.length} with no official test in CI`, `${touching} open PRs touch a certified criterion`, CONF.rule ? `${CONF.rule.name} ${CONF.rule.state}` : ""].filter(Boolean).join(" · ");
   $("#conf-list").innerHTML = `<details class="fold" id="conf-index"><summary><h3>Every standard</h3><span class="facts">${esc(line)}</span></summary><div class="fold-in stack">${head}${specs}${process}</div></details>`;
 }
 

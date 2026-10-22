@@ -183,6 +183,12 @@ def desktop(pg):
                 link.click()
                 pg.wait_for_timeout(300)
             check("conformance: a link from a card opens the standard", bool(target) and pg.eval_on_selector(f"#{target}", "d => d.open"), target)
+        # gaps: every standard says what was measured; the untested count matches the build
+        blocks = pg.eval_on_selector_all("#conf-list details.fold.std", "ds => ds.filter(d => d.textContent.includes('official test in CI')).length")  # textContent: a closed fold hides its body from innerText
+        check("conformance: every standard says whether its official test runs in CI", blocks == len(conf["specs"]), f"{blocks} of {len(conf['specs'])}")
+        untested = sum(1 for s in conf["specs"] if s.get("certified") and not (s.get("measured") or {}).get("ci"))
+        index = pg.inner_text("#conf-index summary")
+        check("conformance: the summary counts the certified standards with no official test in CI", f"{untested} of the {len(certified)} with no official test in CI" in index, index[:160])
         want = sum(1 for p in PRS.values() if set(p.get("conf") or []) & set(certified))
         for b in pg.query_selector_all("#presets button"):
             if b.inner_text().startswith("Clear"):
@@ -210,6 +216,16 @@ with sync_playwright() as p:
             SHOTS.mkdir(parents=True, exist_ok=True)
             pg.screenshot(path=str(SHOTS / f"{label}-top.png"))
         everywhere(pg, label, width)
+        if label == "phone" and MAP.get("conformance"):
+            # a closed fold hides its body from the overflow check above: open every standard and measure again
+            pg.evaluate("document.querySelectorAll('#conf-list details').forEach(d => d.open = true)")
+            pg.wait_for_timeout(300)
+            wide = pg.evaluate("""(vw) => [...document.querySelectorAll('#conf-list *')].filter(el => { const r = el.getBoundingClientRect();
+                return r.width && r.right > vw + 1 && !el.closest('.scroll, pre, table'); }).slice(0, 3).map(el => el.tagName + ' ' + (el.innerText || '').slice(0, 40))""", width)
+            # a pill's text can spill past its own box (pills don't wrap), which no element's box shows: the page width does
+            sw = pg.evaluate("document.documentElement.scrollWidth")
+            check("phone: the opened standards fit the screen", not wide and sw <= width, f"page {sw}px wide; {wide}")
+            pg.evaluate("document.querySelectorAll('#conf-list details').forEach(d => d.open = false)")
         if label == "phone":
             box = pg.query_selector("#glance-row")
             top = box.bounding_box()["y"] if box else None

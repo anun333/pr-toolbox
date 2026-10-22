@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.7.0 (2026-10-22)
+
+- **`motion`: gaps in conformance, by the kind of evidence.** Each standard in the conformance lens now says:
+  - **measured on this build:** whether its official test runs in CI (a `ci_re` searched in the base branch's workflow files), and for a `names` list (US Core's profiles, say) how many are named in the code;
+  - **reported:** the open issues a label or query finds, fetched fresh each build, with a link to the search;
+  - **known:** gaps the profile cites, each with its state read from GitHub (open, fix open, merged or closed) or a short kind for a source outside GitHub.
+
+  The section's summary line counts the certified standards with no official test in CI, and a project-wide label (`conformance.issues`) lists open issues on certification itself.
+- **Controls for the measured checks:** a CI control must find exactly the expected workflow files and a made-up tool must find none; a names control searches the code for a planted name that must come out missing, alongside the real ones that must be found. A broken search stops the build instead of reporting every name missing.
+- **The page check opens every standard at phone width** and measures the page's width as well as each element's. A pill's text can spill past its own box, which no element's box shows; a planted long pill now fails the check.
+- **The OpenEMR profile** adds the HIPAA X12 transaction standards (837P, 837I, 835) and the gaps known today: the CapabilityStatement's sort and paging claims (raised at the 2026-10-20 meeting), C-CDA import gaps, eCQM and QDM records, the discontinued interaction API, public-health HL7 export, the 837I facility code and NPI and ZIP handling, and an axe-core scan of the patient portal (8 WCAG 2.1 A and AA rules failing, 2 of them critical).
+
 ## 0.6.1 (2026-10-22)
 
 - **The OpenEMR conformance profile now comes from CHPL:** OpenEMR 8's listing (11757), read through the CHPL API. It has the same 32 criteria as OpenEMR's wiki; standards with their SVAP updates ((g)(10): US Core 6.1.0 updated to 8.0.0, SMART 2.0.0 to 2.2.0, Bulk Data 1.0.0 to 2.0.0, USCDI v3 to v5; (b)(1): C-CDA R2.1 with Companion Guide 4.1); and how each criterion was certified (test procedure with a tool, gap certification via the 2025 attestation, or attestation alone). The page shows each criterion's method and CHPL's official findings for the listing: no surveillance, no non-conformities and no direct reviews, as of 2026-10-22.

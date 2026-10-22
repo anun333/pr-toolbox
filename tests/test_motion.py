@@ -473,6 +473,36 @@ class CheckPage(unittest.TestCase):
         self.assertIn(cli.PLAYWRIGHT_IMAGE, cmd)
 
 
+class ConformanceChecks(unittest.TestCase):
+    def test_ci_and_names_checks_can_find_and_can_miss(self) -> None:
+        from pr_toolbox.motion import conformance
+        flows = {".github/workflows/fhir.yml": "run: ci/inferno/run.sh", ".github/workflows/lint.yml": "run: phpcs"}
+        self.assertEqual(conformance.ci_files("ci/inferno", flows), [".github/workflows/fhir.yml"])
+        self.assertEqual(conformance.ci_files("no-such-tool", flows), [])
+        text = "const A = 'us-core-bmi';\nconst B = BASE . 'us-core-blood-pressure';\n'http://x/us-core-vital-signs'"
+        self.assertEqual(conformance.names_found(["us-core-bmi", "us-core-blood-pressure", "us-core-vital-signs", "us-core-heart-rate"], text),
+                         {"us-core-bmi", "us-core-blood-pressure", "us-core-vital-signs"})
+        self.assertEqual(conformance.names_found(["us-core-blood"], text), set(), "a name is a whole token, not a prefix")
+
+    def test_measured_controls_fail_when_a_check_cannot_tell(self) -> None:
+        from pr_toolbox.motion import conformance
+        conf = {"specs": [{"id": "api", "paths": ["a/"], "ci_re": "ci/inferno", "names": {"label": "profiles", "where": ["a/"], "names": ["p-one"]}}],
+                "controls": [{"ci": "api", "expect": "found"}, {"ci_re": "nothing-like-this", "expect": "none"}, {"names": "api", "planted": "p-fake"}]}
+        ok = conformance.check(conf, ["a/x"], {}, {"w.yml": "ci/inferno"}, "'p-one'")[0]
+        self.assertEqual(ok, [])
+        # no workflow runs the tool; the code search found nothing at all; a matcher that matches anything
+        self.assertTrue(any("CI control api" in f for f in conformance.check(conf, ["a/x"], {}, {"w.yml": "phpcs"}, "'p-one'")[0]))
+        self.assertTrue(any("names control" in f for f in conformance.check(conf, ["a/x"], {}, {"w.yml": "ci/inferno"}, "")[0]))
+        self.assertTrue(any("planted name was found" in f for f in conformance.check(conf, ["a/x"], {}, {"w.yml": "ci/inferno"}, "'p-one' 'p-fake'")[0]))
+
+    def test_known_gaps_take_their_state_from_github(self) -> None:
+        from pr_toolbox.motion import conformance
+        conf = {"specs": [{"id": "s", "paths": ["a/"], "known": [{"text": "t", "url": "https://github.com/o/r/pull/7", "kind": "fix open"},
+                                                                {"text": "u", "url": "https://forum.example/t/1", "kind": "meeting"}]}]}
+        specs, _ = conformance.build(conf, {}, set(), issue=lambda n: {"state": "closed", "pr": True})
+        self.assertEqual([(k["n"], k["state"]) for k in specs[0]["known"]], [(7, "closed"), (None, None)])
+
+
 class Profiles(unittest.TestCase):
     def test_openemr_preset_carries_motion(self) -> None:
         from pr_toolbox import common
@@ -499,7 +529,10 @@ class Profiles(unittest.TestCase):
         # the file-and-title controls pass against the preset's own paths; controls naming PRs need them open
         paths = [p for s in conf["specs"] for p in s.get("paths", [])]
         base = paths + [f for c in conf["controls"] for f in c.get("files", [])]
-        failures, notes = conformance.check(conf, base, {})
+        names = [n for s in conf["specs"] for n in (s.get("names") or {}).get("names", [])]
+        flows = {".github/workflows/inferno-test.yml": "    - name: Run Inferno\n      working-directory: ci/inferno",
+                 ".github/workflows/dependabot-auto-merge.yml": "steps.metadata.outputs.directory == '/ci/inferno'"}
+        failures, notes = conformance.check(conf, base, {}, flows, " ".join(f"'{n}'" for n in names))
         self.assertEqual(failures, [])
         self.assertTrue(all("no longer open" in n for n in notes))
 

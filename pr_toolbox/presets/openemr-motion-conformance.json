@@ -67,7 +67,88 @@
         }
       ],
       "mapping": "provisional",
-      "certified_by": "ONC test procedure 1.9 with Inferno; gap certification via the 2025 attestation"
+      "certified_by": "ONC test procedure 1.9 with Inferno; gap certification via the 2025 attestation",
+      "ci_re": "working-directory:\\s*ci/inferno",
+      "issues": {
+        "label": "FHIR"
+      },
+      "names": {
+        "label": "US Core 8.0.0 resource profiles",
+        "where": [
+          "src/",
+          "apis/"
+        ],
+        "names": [
+          "head-occipital-frontal-circumference-percentile",
+          "pediatric-bmi-for-age",
+          "pediatric-weight-for-height",
+          "us-core-adi-documentreference",
+          "us-core-allergyintolerance",
+          "us-core-average-blood-pressure",
+          "us-core-blood-pressure",
+          "us-core-bmi",
+          "us-core-body-height",
+          "us-core-body-temperature",
+          "us-core-body-weight",
+          "us-core-care-experience-preference",
+          "us-core-careplan",
+          "us-core-careteam",
+          "us-core-condition-encounter-diagnosis",
+          "us-core-condition-problems-health-concerns",
+          "us-core-coverage",
+          "us-core-diagnosticreport-lab",
+          "us-core-diagnosticreport-note",
+          "us-core-documentreference",
+          "us-core-encounter",
+          "us-core-goal",
+          "us-core-head-circumference",
+          "us-core-heart-rate",
+          "us-core-immunization",
+          "us-core-implantable-device",
+          "us-core-location",
+          "us-core-medication",
+          "us-core-medicationdispense",
+          "us-core-medicationrequest",
+          "us-core-observation-adi-documentation",
+          "us-core-observation-clinical-result",
+          "us-core-observation-lab",
+          "us-core-observation-occupation",
+          "us-core-observation-pregnancyintent",
+          "us-core-observation-pregnancystatus",
+          "us-core-observation-screening-assessment",
+          "us-core-observation-sexual-orientation",
+          "us-core-organization",
+          "us-core-patient",
+          "us-core-practitioner",
+          "us-core-practitionerrole",
+          "us-core-procedure",
+          "us-core-provenance",
+          "us-core-pulse-oximetry",
+          "us-core-questionnaireresponse",
+          "us-core-relatedperson",
+          "us-core-respiratory-rate",
+          "us-core-servicerequest",
+          "us-core-simple-observation",
+          "us-core-smokingstatus",
+          "us-core-specimen",
+          "us-core-treatment-intervention-preference",
+          "us-core-vital-signs"
+        ],
+        "source": "the hl7.fhir.us.core 8.0.0 package's StructureDefinitions (resource constraints), read 2026-10-22"
+      },
+      "known": [
+        {
+          "text": "The CapabilityStatement advertises sorting and page limits on endpoints that don't implement them; it should say exactly where they are supported.",
+          "url": "https://community.open-emr.org/t/27149",
+          "kind": "meeting",
+          "note": "maintainers, weekly meeting 2026-10-20"
+        },
+        {
+          "text": "Observation units are stored as free text, not checked against UCUM, so an export can label a non-UCUM unit as UCUM.",
+          "url": "https://github.com/openemr/openemr/issues/14698",
+          "kind": "issue"
+        }
+      ]
     },
     {
       "id": "b1",
@@ -105,7 +186,28 @@
       ],
       "mapping": "provisional",
       "certified_by": "ONC test procedure v1.1 with the Edge Testing Tool; gap certification via the 2025 attestation",
-      "standards_source": "the CHPL listing"
+      "standards_source": "the CHPL listing",
+      "ci_re": "reference-ccda-validator|ccda[_-]validator",
+      "issues": {
+        "label": "CCDA Service"
+      },
+      "known": [
+        {
+          "text": "C-CDA import drops the smoking status sent under current template IDs.",
+          "url": "https://github.com/openemr/openemr/pull/14584",
+          "kind": "fix open"
+        },
+        {
+          "text": "C-CDA import drops body weight sent as LOINC 29463-7.",
+          "url": "https://github.com/openemr/openemr/pull/14585",
+          "kind": "fix open"
+        },
+        {
+          "text": "C-CDA vitals carry units that aren't UCUM.",
+          "url": "https://github.com/openemr/openemr/issues/14657",
+          "kind": "issue"
+        }
+      ]
     },
     {
       "id": "b10",
@@ -185,7 +287,23 @@
       },
       "mapping": "provisional",
       "certified_by": "ONC test procedure with Cypress",
-      "standards_source": "the CHPL listing"
+      "standards_source": "the CHPL listing",
+      "ci_re": "projecttacoma",
+      "issues": {
+        "query": "in:title eCQM OR CQM OR QRDA OR QDM"
+      },
+      "known": [
+        {
+          "text": "eCQMs counted observations OpenEMR treats as deleted.",
+          "url": "https://github.com/openemr/openemr/pull/14587",
+          "kind": "fixed"
+        },
+        {
+          "text": "An audit of the QDM data layer: records the measures count that OpenEMR treats as deleted or wrong.",
+          "url": "https://github.com/openemr/openemr/issues/14671",
+          "kind": "issue"
+        }
+      ]
     },
     {
       "id": "cpoe",
@@ -209,7 +327,14 @@
       },
       "note": "Drug-drug and drug-allergy interaction checks, (a)(4), are not in OpenEMR 8's certification.",
       "mapping": "provisional",
-      "certified_by": "attestation"
+      "certified_by": "attestation",
+      "known": [
+        {
+          "text": "The drug-interaction check calls NLM's interaction API, which NLM discontinued on 2024-01-02. Interaction checks, (a)(4), aren't certified.",
+          "url": "https://github.com/openemr/openemr/issues/9772",
+          "kind": "issue"
+        }
+      ]
     },
     {
       "id": "a5",
@@ -401,7 +526,18 @@
       "hti5": {
         "action": "kept"
       },
-      "mapping": "provisional"
+      "mapping": "provisional",
+      "ci_re": "hl7v2-iz|NIST HL7",
+      "issues": {
+        "query": "in:title syndromic OR immunization OR \"HL7 v2\""
+      },
+      "known": [
+        {
+          "text": "HL7 export from the Immunization and Syndromic Surveillance tabs.",
+          "url": "https://github.com/openemr/openemr/pull/14613",
+          "kind": "fix open"
+        }
+      ]
     },
     {
       "id": "erx",
@@ -423,7 +559,10 @@
         "note": "HTI-4 moves it to NCPDP SCRIPT 2023011 and requires (b)(4) real-time benefit from 2028-01-01"
       },
       "note": "The 2026-10-20 weekly meeting agreed the goal is a certified (b)(3) companion product, with other options as modules. Which product is for the project's leadership; this map stays neutral.",
-      "mapping": "provisional"
+      "mapping": "provisional",
+      "issues": {
+        "label": "e-Prescribe"
+      }
     },
     {
       "id": "a11y",
@@ -446,6 +585,65 @@
       },
       "deadline": "2027-05-11 for recipients with 15 or more employees, 2028-05-10 for smaller ones (HHS interim final rule of 2026-05-07)",
       "url": "https://www.hhs.gov/press-room/hhs-extends-mobile-and-web-accessibility-deadline.html",
+      "mapping": "provisional",
+      "ci_re": "axe-core|pa11y",
+      "issues": {
+        "query": "accessibility OR WCAG OR \"screen reader\""
+      },
+      "known": [
+        {
+          "text": "axe-core, WCAG 2.0 and 2.1 levels A and AA, on the portal's login page, dashboard and nine sections, signed in as a synthetic patient: 8 rules fail. Critical: images without alt text, form fields without labels. Serious: colour contrast, frames without titles, pages without a language, links without text, a malformed list, nested interactive controls.",
+          "url": "https://dequeuniversity.com/rules/axe/4.10",
+          "kind": "measured",
+          "note": "axe-core 4.10.2 on master f4d5f8aad2, 2026-10-22; elements in the shared navigation repeat across views, so rules count, not elements"
+        }
+      ]
+    },
+    {
+      "id": "x12",
+      "label": "45 CFR 162",
+      "title": "HIPAA transaction standards: X12 claims and remittance",
+      "certified": false,
+      "kind": "HIPAA standard for every covered entity's electronic claims, not an ONC criterion",
+      "standards": [
+        "ASC X12 005010X222A1 (837P)",
+        "ASC X12 005010X223A2 (837I)",
+        "ASC X12 005010X221A1 (835)"
+      ],
+      "paths": [
+        "src/Billing/X12",
+        "src/Billing/BillingProcessor/",
+        "src/Billing/EdiHistory/",
+        "interface/billing/"
+      ],
+      "title_re": "(?i)\\b83[57][pi]?\\b|\\bx12\\b|\\bera\\b|remittance",
+      "tool": {
+        "name": "a clearinghouse's edits (no validator in CI)",
+        "before_merge": false
+      },
+      "ci_re": "x12-?validator|edifecs",
+      "issues": {
+        "label": "billing & payments"
+      },
+      "deadline": "claims attachments standard adopted 2026-03-24, effective 2026-05-26 (Federal Register 2026-05676); compliance dates in the rule",
+      "url": "https://www.federalregister.gov/documents/2026/03/24/2026-05676/administrative-simplification-adoption-of-standards-for-health-care-claims-attachments-transactions",
+      "known": [
+        {
+          "text": "Every 837I carries a malformed CLM05 (facility code) built from single characters of UB-04 box 4.",
+          "url": "https://github.com/openemr/openemr/issues/14772",
+          "kind": "issue"
+        },
+        {
+          "text": "NPIs are sent with hyphens and spaces the NM109 element doesn't allow.",
+          "url": "https://github.com/openemr/openemr/pull/14254",
+          "kind": "fix open"
+        },
+        {
+          "text": "ZIP codes that aren't nine digits are sent without warning of the rejection risk.",
+          "url": "https://github.com/openemr/openemr/pull/14253",
+          "kind": "fix open"
+        }
+      ],
       "mapping": "provisional"
     }
   ],
@@ -555,6 +753,33 @@
     {
       "pr": 14522,
       "expect": []
+    },
+    {
+      "ci_re": "no-such-test-tool-xyz",
+      "expect": "none"
+    },
+    {
+      "names": "g10",
+      "planted": "us-core-not-a-real-profile"
+    },
+    {
+      "files": [
+        "src/Billing/X125010837I.php"
+      ],
+      "expect": [
+        "x12"
+      ]
+    },
+    {
+      "ci": "g10",
+      "expect": "found",
+      "expect_files": [
+        ".github/workflows/inferno-test.yml"
+      ]
     }
-  ]
+  ],
+  "issues": {
+    "label": "ASTP/ONC Certification",
+    "about": "open issues on certification itself"
+  }
 }

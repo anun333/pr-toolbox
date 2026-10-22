@@ -31,14 +31,46 @@ def match_all(conf: dict, files, title: str) -> list[str]:
     return [s["id"] for s in conf.get("specs", []) if matcher(s)(files, title)]
 
 
-def check(conf: dict, base_files: list[str], open_prs: dict) -> tuple[list[str], list[str]]:
-    """(failures, notes). open_prs maps a PR number to {"files": [...], "title": str} for every open PR."""
+def ci_files(pattern: str | None, workflows: dict) -> list[str]:
+    """The CI workflow files (path -> text) that run what the pattern names."""
+    if not pattern:
+        return []
+    rx = re.compile(pattern)
+    return sorted(f for f, text in workflows.items() if rx.search(text))
+
+
+def names_found(names: list[str], text: str) -> set[str]:
+    """The names that appear in the text as a whole token: quoted, or ending a path ('.../us-core-bmi')."""
+    if not names:
+        return set()
+    rx = re.compile(r"[\"'/](" + "|".join(re.escape(n) for n in sorted(names, key=len, reverse=True)) + r")[\"']")
+    return set(rx.findall(text))
+
+
+def check(conf: dict, base_files: list[str], open_prs: dict, workflows: dict | None = None, name_text: str = "") -> tuple[list[str], list[str]]:
+    """(failures, notes). open_prs maps a PR number to {"files": [...], "title": str} for every open PR; workflows maps
+    each CI workflow file to its text; name_text is the code the names checks search."""
     failures, notes = [], []
+    by_id = {s["id"]: s for s in conf.get("specs", [])}
+    workflows = workflows or {}
     for s in conf.get("specs", []):
         for p in s.get("paths") or []:
             if not any(f.startswith(p) for f in base_files):
                 failures.append(f"{s['id']}: no file on the base branch starts with {p}")
     for c in conf.get("controls", []):
+        # the measured checks: each must be able to find, and to not find
+        if "ci" in c or "ci_re" in c:
+            pattern = by_id.get(c.get("ci"), {}).get("ci_re") if "ci" in c else c["ci_re"]
+            got = ci_files(pattern, workflows)
+            if (c["expect"] == "found") != bool(got) or ("expect_files" in c and got != sorted(c["expect_files"])):
+                failures.append(f"CI control {c.get('ci') or c['ci_re']}: expected {c.get('expect_files') or c['expect']}, found {got or 'nothing'}")
+            continue
+        if "names" in c:
+            spec_names = (by_id.get(c["names"], {}).get("names") or {}).get("names", [])
+            found = names_found(spec_names + [c["planted"]], name_text)
+            if c["planted"] in found or not found:
+                failures.append(f"names control {c['names']}: the planted name was {'found' if c['planted'] in found else 'missing, but so was every real one'}")
+            continue
         want = sorted(c.get("expect", []))
         if "pr" in c:
             pr = open_prs.get(c["pr"])
@@ -55,9 +87,12 @@ def check(conf: dict, base_files: list[str], open_prs: dict) -> tuple[list[str],
     return failures, notes
 
 
-def build(conf: dict, prs: dict, mass: set) -> tuple[list[dict], dict]:
-    """(specs, conf_of): each spec with the open PRs that touch it, and each PR's matched spec ids.
-    prs maps a PR number to {"files": [...], "title": str}; a PR over the mass limit is matched by title only."""
+def build(conf: dict, prs: dict, mass: set, workflows: dict | None = None, name_text: str = "", reported: dict | None = None,
+          issue=None) -> tuple[list[dict], dict]:
+    """(specs, conf_of): each spec with the open PRs that touch it, its measured and reported gaps and the state of its
+    known ones, and each PR's matched spec ids. prs maps a PR number to {"files": [...], "title": str}; a PR over the
+    mass limit is matched by title only. issue(n) returns a GitHub issue or PR record, for a known gap's state."""
+    workflows, reported = workflows or {}, reported or {}
     conf_of: dict[int, list[str]] = {}
     out = []
     for s in conf.get("specs", []):
@@ -68,5 +103,17 @@ def build(conf: dict, prs: dict, mass: set) -> tuple[list[dict], dict]:
             if reasons:
                 inflight.append({"n": n, "why": reasons})
                 conf_of.setdefault(n, []).append(s["id"])
-        out.append({**{k: v for k, v in s.items() if k != "title_re"}, "inflight": sorted(inflight, key=lambda x: -x["n"])})
+        measured = {"ci": ci_files(s.get("ci_re"), workflows)}
+        if s.get("names"):
+            want = s["names"]["names"]
+            found = names_found(want, name_text)
+            measured["names"] = {"label": s["names"]["label"], "source": s["names"].get("source"), "total": len(want),
+                                 "found": len(found), "missing": sorted(set(want) - found)}
+        known = []
+        for k in s.get("known", []):
+            m = re.search(r"/(?:issues|pull)/(\d+)", k.get("url") or "")
+            rec = issue(int(m.group(1))) if (m and issue) else {}
+            known.append({**k, "n": int(m.group(1)) if m else None, "state": rec.get("state"), "pr": rec.get("pr")})
+        out.append({**{k: v for k, v in s.items() if k not in ("title_re", "names", "known")}, "inflight": sorted(inflight, key=lambda x: -x["n"]),
+                    "measured": measured, "reported": reported.get(s["id"]), "known": known})
     return out, conf_of

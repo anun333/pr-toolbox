@@ -161,6 +161,24 @@ for n in plan:
     out = run("gh", "api", f"repos/{P['github']}/issues/{n}", "--jq",
               "{number,title,state,user:.user.login,updated_at,labels:[.labels[].name],body,comments,pr:(.pull_request!=null)}", check=False)
     (C / "issues" / f"{n}.json").write_text(out or "{}")
+# conformance: the open issues each standard's query finds (and the project-wide one), and the issues and PRs its
+# known gaps cite, fresh each build
+conf = P.get("conformance") or {}
+reported = {}
+for key, q in [(s["id"], s.get("issues")) for s in conf.get("specs", [])] + [("_general", conf.get("issues"))]:
+    if not q:
+        continue
+    query = f"repo:{P['github']} is:issue is:open " + (f'label:"{q["label"]}"' if q.get("label") else q["query"])
+    out = run("gh", "api", "-X", "GET", "search/issues", "-f", f"q={query}", "-f", "per_page=5", "-f", "sort=updated",
+              "--jq", "{total: .total_count, items: [.items[] | {number, title}]}", check=False)
+    reported[key] = {"query": query, "label": q.get("label"), **(json.loads(out) if out.strip() else {"total": None, "items": []})}
+(C / "conformance-issues.json").write_text(json.dumps(reported))
+cited = sorted({int(m.group(1)) for s in conf.get("specs", []) for k in s.get("known", [])
+                for m in [re.search(r"/(?:issues|pull)/(\d+)", k.get("url") or "")] if m})
+for n in cited:
+    out = run("gh", "api", f"repos/{P['github']}/issues/{n}", "--jq",
+              "{number,title,state,user:.user.login,updated_at,labels:[.labels[].name],body,comments,pr:(.pull_request!=null)}", check=False)
+    (C / "issues" / f"{n}.json").write_text(out or "{}")
 print(json.dumps({"open_prs": len(prs), "drafts": sum(p["isDraft"] for p in prs), "heads_fetched": len(numbers) - len(missing),
                   "ci": {s: sum(1 for e in extra.values() if e["ci"] == s) for s in ("SUCCESS", "FAILURE", "ERROR", "PENDING", "EXPECTED", None)},
                   "plan_issues": len(plan), "mergers_past_year": mergers}))

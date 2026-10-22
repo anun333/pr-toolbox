@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.1 (2026-10-22)
+
+- **The OpenEMR conformance profile now comes from CHPL:** OpenEMR 8's listing (11757), read through the CHPL API. It has the same 32 criteria as OpenEMR's wiki; standards with their SVAP updates ((g)(10): US Core 6.1.0 updated to 8.0.0, SMART 2.0.0 to 2.2.0, Bulk Data 1.0.0 to 2.0.0, USCDI v3 to v5; (b)(1): C-CDA R2.1 with Companion Guide 4.1); and how each criterion was certified (test procedure with a tool, gap certification via the 2025 attestation, or attestation alone). The page shows each criterion's method and CHPL's official findings for the listing: no surveillance, no non-conformities and no direct reviews, as of 2026-10-22.
+
 ## 0.6.0 (2026-10-22)
 
 - **`motion`: a conformance lens.** A profile's `motion.conformance` lists the outside standards the project answers to (certification criteria, rules), each with the code paths that carry it, the official tool that tests it and whether that tool can run on a PR before merge, what a pending rule would do to it, and short cited guidance. The page gains a Conformance section with one folded entry per standard and the open PRs touching it, a Standards panel on each PR card, a "Touches a certified criterion" triage filter, and standards in path lookups. It says what a PR touches, not whether it conforms.

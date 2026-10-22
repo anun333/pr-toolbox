@@ -1,11 +1,13 @@
 {
-  "_about": "The outside standards OpenEMR answers to, for motion's conformance lens: each ONC certification criterion OpenEMR 8 is certified for (and a few standards it isn't certified for but still implements), the code paths that carry it, the official tool that tests it and whether that tool can run on a PR before merge, and what the pending HTI-5 rule would do to it. A PR is matched by its files or its title. Paths are this file's reading of the code, not the certification documents', so every entry says mapping: provisional until a maintainer confirms it. Privacy and security criteria are listed so PRs reach the right reviewers, never analysed.",
+  "_about": "The outside standards OpenEMR answers to, for motion's conformance lens: each ONC certification criterion OpenEMR 8 is certified for (from its CHPL listing) (and a few standards it isn't certified for but still implements), the code paths that carry it, the official tool that tests it and whether that tool can run on a PR before merge, and what the pending HTI-5 rule would do to it. A PR is matched by its files or its title. Paths are this file's reading of the code, not the certification documents', so every entry says mapping: provisional until a maintainer confirms it. Privacy and security criteria are listed so PRs reach the right reviewers, never analysed.",
   "heading": "The standards OpenEMR is certified against",
   "source": {
-    "certification": "OpenEMR 8, CHPL 15.05.05.3115.OPEN.02.01.1.260130, certified 2026-01-30",
-    "criteria_from": "OpenEMR's wiki (its own list); not yet checked against the CHPL listing, which refused our requests",
-    "url": "https://www.open-emr.org/wiki/index.php/OpenEMR_8.0.0_ONC_Ambulatory_EHR_Certification_Requirements",
+    "certification": "OpenEMR 8, CHPL 15.05.05.3115.OPEN.02.01.1.260130, certified 2026-01-30 by SLI Compliance, status Active",
+    "criteria_from": "its CHPL listing, read through the CHPL API (32 criteria; OpenEMR's wiki lists the same)",
+    "url": "https://chpl.healthit.gov/#/listing/11757",
     "chpl": "https://chpl.healthit.gov/#/listing/11757",
+    "official_findings": "CHPL records 0 surveillance activities, 0 non-conformities (open or closed) and 0 direct reviews for this listing.",
+    "methods": "CHPL also records how each criterion was certified: by ONC test procedure with a test tool, by gap certification through a 2025 attestation (not re-tested), or by attestation alone. Each is a permitted method; attestation means no test result stands behind the criterion.",
     "checked": "2026-10-22"
   },
   "rule": {
@@ -18,191 +20,541 @@
   },
   "specs": [
     {
-      "id": "g10", "label": "(g)(10)", "title": "Standardized API for patient and population services",
-      "certified": true, "kind": "ONC criterion",
-      "standards": ["HL7 FHIR US Core 8.0.0", "SMART App Launch 2.2.0", "Bulk Data Access 2.0.0", "USCDI v5"],
-      "standards_source": "OpenEMR's SVAP notice of 2026-01-22, on the wiki page above",
-      "paths": ["src/Services/FHIR/", "src/RestControllers/FHIR/", "src/RestControllers/SMART/", "src/FHIR/", "apis/routes/_rest_routes_fhir", "oauth2/", "src/Common/Auth/OpenIDConnect/"],
+      "id": "g10",
+      "label": "(g)(10)",
+      "title": "Standardized API for patient and population services",
+      "certified": true,
+      "kind": "ONC criterion",
+      "standards": [
+        "FHIR R4 (170.215(a)(1))",
+        "US Core 6.1.0, updated to 8.0.0 by SVAP",
+        "SMART App Launch 2.0.0, updated to 2.2.0",
+        "Bulk Data Access 1.0.0, updated to 2.0.0",
+        "USCDI v3, updated to v5",
+        "OpenID Connect Core 1.0"
+      ],
+      "standards_source": "the CHPL listing (standards and SVAP updates)",
+      "paths": [
+        "src/Services/FHIR/",
+        "src/RestControllers/FHIR/",
+        "src/RestControllers/SMART/",
+        "src/FHIR/",
+        "apis/routes/_rest_routes_fhir",
+        "oauth2/",
+        "src/Common/Auth/OpenIDConnect/"
+      ],
       "title_re": "(?i)\\bfhir\\b|\\bsmart\\b.*\\blaunch|\\bus ?core\\b|\\bbulk (data|export)\\b|capabilitystatement",
-      "tool": {"name": "Inferno (g)(10) test kit", "url": "https://github.com/onc-healthit/onc-certification-g10-test-kit", "before_merge": false,
-               "note": "Core runs it in CI (.github/workflows/inferno-test.yml) only where the INFERNO_PAT secret is available: master and maintainers' own branches, not PRs from forks. The 2026-10-20 weekly meeting: it \"only runs when code reaches master\"."},
-      "hti5": {"action": "kept"},
+      "tool": {
+        "name": "Inferno (g)(10) test kit",
+        "url": "https://github.com/onc-healthit/onc-certification-g10-test-kit",
+        "before_merge": false,
+        "note": "Core runs it in CI (.github/workflows/inferno-test.yml) only where the INFERNO_PAT secret is available: master and maintainers' own branches, not PRs from forks. The 2026-10-20 weekly meeting: it \"only runs when code reaches master\"."
+      },
+      "hti5": {
+        "action": "kept"
+      },
       "security_note": "Authorization, scopes and token handling are the maintainers' security review (the FHIR and OAuth test work Brady described on 2026-10-20). This map labels them; it doesn't analyse them.",
       "guidance": [
-        {"text": "A server's CapabilityStatement (its /metadata) declares the interactions and search parameters it supports, and clients rely on it. Advertising _sort or _count where they aren't implemented makes a client get unsorted or unpaged results without an error.", "source": "FHIR R4, CapabilityStatement; raised on the 2026-10-20 call", "url": "https://hl7.org/fhir/R4/capabilitystatement.html"},
-        {"text": "Resources for the USCDI data elements follow the US Core profiles OpenEMR is certified to, 8.0.0 since its SVAP update.", "source": "US Core 8.0.0", "url": "https://hl7.org/fhir/us/core/STU8/"}
+        {
+          "text": "A server's CapabilityStatement (its /metadata) declares the interactions and search parameters it supports, and clients rely on it. Advertising _sort or _count where they aren't implemented makes a client get unsorted or unpaged results without an error.",
+          "source": "FHIR R4, CapabilityStatement; raised on the 2026-10-20 call",
+          "url": "https://hl7.org/fhir/R4/capabilitystatement.html"
+        },
+        {
+          "text": "Resources for the USCDI data elements follow the US Core profiles OpenEMR is certified to, 8.0.0 since its SVAP update.",
+          "source": "US Core 8.0.0",
+          "url": "https://hl7.org/fhir/us/core/STU8/"
+        }
       ],
-      "mapping": "provisional"
+      "mapping": "provisional",
+      "certified_by": "ONC test procedure 1.9 with Inferno; gap certification via the 2025 attestation"
     },
     {
-      "id": "b1", "label": "(b)(1)", "title": "Transitions of care (C-CDA)",
-      "certified": true, "kind": "ONC criterion",
-      "standards": ["HL7 C-CDA (the version OpenEMR certified to is on the CHPL listing, not yet read)"],
+      "id": "b1",
+      "label": "(b)(1)",
+      "title": "Transitions of care (C-CDA)",
+      "certified": true,
+      "kind": "ONC criterion",
+      "standards": [
+        "C-CDA R2.1 with Companion Guide Release 4.1 (170.205(a)(6))",
+        "USCDI v3 (170.213(b))",
+        "Direct Applicability Statement 1.2 and Edge Protocols 1.1"
+      ],
       "relied_upon": "EMR Direct Interoperability Engine 2017 (OpenEMR's wiki)",
-      "paths": ["src/Services/Cda/", "interface/modules/zend_modules/module/Carecoordination/"],
-      "title_re": "(?i)\\bc-?cda\\b|\\bccda\\b|\\bccd\\b|transitions? of care",
-      "tool": {"name": "ONC C-CDA validator", "url": "https://github.com/onc-healthit/reference-ccda-validator", "before_merge": true,
-               "note": "Open source and runs locally; a PR's generated documents can be validated before merge. Core's CI doesn't run it."},
-      "hti5": {"action": "revised", "when": "2027-01-01"},
-      "guidance": [
-        {"text": "A received C-CDA's sections are read by their template IDs, which change between C-CDA releases; an importer that matches one release's IDs drops the same section sent under another's.", "source": "HL7 C-CDA templates", "url": "https://www.hl7.org/implement/standards/product_brief.cfm?product_id=492"}
+      "paths": [
+        "src/Services/Cda/",
+        "interface/modules/zend_modules/module/Carecoordination/"
       ],
-      "mapping": "provisional"
+      "title_re": "(?i)\\bc-?cda\\b|\\bccda\\b|\\bccd\\b|transitions? of care",
+      "tool": {
+        "name": "ONC Edge Testing Tool (its C-CDA validator is open source)",
+        "url": "https://github.com/onc-healthit/reference-ccda-validator",
+        "before_merge": true,
+        "note": "Certified with the Edge Testing Tool (CHPL). Its C-CDA validator runs locally, so a PR's generated documents can be validated before merge; core's CI doesn't run it."
+      },
+      "hti5": {
+        "action": "revised",
+        "when": "2027-01-01"
+      },
+      "guidance": [
+        {
+          "text": "A received C-CDA's sections are read by their template IDs, which change between C-CDA releases; an importer that matches one release's IDs drops the same section sent under another's.",
+          "source": "HL7 C-CDA templates",
+          "url": "https://www.hl7.org/implement/standards/product_brief.cfm?product_id=492"
+        }
+      ],
+      "mapping": "provisional",
+      "certified_by": "ONC test procedure v1.1 with the Edge Testing Tool; gap certification via the 2025 attestation",
+      "standards_source": "the CHPL listing"
     },
     {
-      "id": "b10", "label": "(b)(10)", "title": "Electronic health information export",
-      "certified": true, "kind": "ONC criterion",
-      "paths": ["interface/modules/custom_modules/oe-module-ehi-exporter/", "Documentation/EHI_Export/"],
+      "id": "b10",
+      "label": "(b)(10)",
+      "title": "Electronic health information export",
+      "certified": true,
+      "kind": "ONC criterion",
+      "paths": [
+        "interface/modules/custom_modules/oe-module-ehi-exporter/",
+        "Documentation/EHI_Export/"
+      ],
       "title_re": "(?i)\\behi\\b.*export|electronic health information export",
-      "tool": {"name": "none automated", "before_merge": true, "note": "The export's format must stay as published in Documentation/EHI_Export; a schema change needs that documentation regenerated."},
-      "hti5": {"action": "kept"},
-      "mapping": "provisional"
+      "tool": {
+        "name": "none automated",
+        "before_merge": true,
+        "note": "The export's format must stay as published in Documentation/EHI_Export; a schema change needs that documentation regenerated."
+      },
+      "hti5": {
+        "action": "kept"
+      },
+      "mapping": "provisional",
+      "certified_by": "attestation"
     },
     {
-      "id": "b11", "label": "(b)(11)", "title": "Decision support interventions",
-      "certified": true, "kind": "ONC criterion",
-      "standards": ["USCDI v5 (OpenEMR's SVAP notice)"],
-      "paths": ["src/ClinicalDecisionRules/", "interface/super/rules/", "library/clinical_rules.php"],
+      "id": "b11",
+      "label": "(b)(11)",
+      "title": "Decision support interventions",
+      "certified": true,
+      "kind": "ONC criterion",
+      "standards": [
+        "USCDI v5 (OpenEMR's SVAP notice)"
+      ],
+      "paths": [
+        "src/ClinicalDecisionRules/",
+        "interface/super/rules/",
+        "library/clinical_rules.php"
+      ],
       "title_re": "(?i)decision support|\\bcds\\b|clinical rules?\\b",
-      "tool": {"name": "ONC test procedure (demonstration)", "before_merge": false},
-      "hti5": {"action": "revised", "note": "would drop HTI-1's source-attribute and risk-management requirements for predictive interventions"},
-      "mapping": "provisional"
+      "tool": {
+        "name": "ONC test procedure (demonstration)",
+        "before_merge": false
+      },
+      "hti5": {
+        "action": "revised",
+        "note": "would drop HTI-1's source-attribute and risk-management requirements for predictive interventions"
+      },
+      "mapping": "provisional",
+      "certified_by": "attestation"
     },
     {
-      "id": "cqm", "label": "(c)(1)–(c)(3)", "title": "Clinical quality measures: record and export, import and calculate, report",
-      "certified": true, "kind": "ONC criteria",
-      "standards": ["eCQMs CMS22, CMS69, CMS122, CMS124, CMS125, CMS127, CMS130, CMS138, CMS147, CMS165 (OpenEMR's wiki)", "QDM", "QRDA"],
-      "paths": ["src/Cqm/", "src/Services/Qdm/", "library/classes/rulesets/Cqm/", "templates/reports/cqm/", "interface/reports/cqm.php"],
+      "id": "cqm",
+      "label": "(c)(1)–(c)(3)",
+      "title": "Clinical quality measures: record and export, import and calculate, report",
+      "certified": true,
+      "kind": "ONC criteria",
+      "standards": [
+        "eCQMs CMS22, CMS69, CMS122, CMS124, CMS125, CMS127, CMS130, CMS138, CMS147, CMS165",
+        "QRDA Category I (170.205(h)(2)) and Category III"
+      ],
+      "paths": [
+        "src/Cqm/",
+        "src/Services/Qdm/",
+        "library/classes/rulesets/Cqm/",
+        "templates/reports/cqm/",
+        "interface/reports/cqm.php"
+      ],
       "title_re": "(?i)\\be?cqms?\\b|\\bqdm\\b|\\bqrda\\b|quality measures?",
-      "tool": {"name": "Cypress", "url": "https://github.com/projecttacoma/cypress", "before_merge": true, "note": "Runs locally against an install; needs a UMLS licence for the value sets."},
-      "hti5": {"action": "revised", "note": "(c)(1) and (c)(2) kept; (c)(3) revised"},
-      "mapping": "provisional"
+      "tool": {
+        "name": "Cypress",
+        "url": "https://github.com/projecttacoma/cypress",
+        "before_merge": true,
+        "note": "Runs locally against an install; needs a UMLS licence for the value sets."
+      },
+      "hti5": {
+        "action": "revised",
+        "note": "(c)(1) and (c)(2) kept; (c)(3) revised"
+      },
+      "mapping": "provisional",
+      "certified_by": "ONC test procedure with Cypress",
+      "standards_source": "the CHPL listing"
     },
     {
-      "id": "cpoe", "label": "(a)(1), (a)(2)", "title": "CPOE: medications and laboratory",
-      "certified": true, "kind": "ONC criteria",
-      "paths": ["interface/drugs/", "controllers/C_Prescription.class.php", "templates/prescription/", "interface/orders/"],
+      "id": "cpoe",
+      "label": "(a)(1), (a)(2)",
+      "title": "CPOE: medications and laboratory",
+      "certified": true,
+      "kind": "ONC criteria",
+      "paths": [
+        "interface/drugs/",
+        "controllers/C_Prescription.class.php",
+        "templates/prescription/",
+        "interface/orders/"
+      ],
       "title_re": "(?i)\\bcpoe\\b",
-      "tool": {"name": "ONC test procedure (demonstration)", "before_merge": false},
-      "hti5": {"action": "kept"},
+      "tool": {
+        "name": "ONC test procedure (demonstration)",
+        "before_merge": false
+      },
+      "hti5": {
+        "action": "kept"
+      },
       "note": "Drug-drug and drug-allergy interaction checks, (a)(4), are not in OpenEMR 8's certification.",
-      "mapping": "provisional"
+      "mapping": "provisional",
+      "certified_by": "attestation"
     },
     {
-      "id": "a5", "label": "(a)(5)", "title": "Patient demographics and observations",
-      "certified": true, "kind": "ONC criterion",
-      "paths": ["interface/patient_file/summary/demographics_full.php", "interface/patient_file/summary/demographics_save.php", "interface/new/", "src/Services/PatientService.php"],
+      "id": "a5",
+      "label": "(a)(5)",
+      "title": "Patient demographics and observations",
+      "certified": true,
+      "kind": "ONC criterion",
+      "paths": [
+        "interface/patient_file/summary/demographics_full.php",
+        "interface/patient_file/summary/demographics_save.php",
+        "interface/new/",
+        "src/Services/PatientService.php"
+      ],
       "title_re": "(?i)\\bdemographics?\\b|sexual orientation|gender identity",
-      "tool": {"name": "ONC test procedure (demonstration)", "before_merge": false},
-      "hti5": {"action": "revised"},
-      "mapping": "provisional"
+      "tool": {
+        "name": "ONC test procedure (demonstration)",
+        "before_merge": false
+      },
+      "hti5": {
+        "action": "revised"
+      },
+      "mapping": "provisional",
+      "certified_by": "attestation"
     },
     {
-      "id": "a12", "label": "(a)(12)", "title": "Family health history",
-      "certified": true, "kind": "ONC criterion",
-      "paths": ["interface/patient_file/history/history"],
+      "id": "a12",
+      "label": "(a)(12)",
+      "title": "Family health history",
+      "certified": true,
+      "kind": "ONC criterion",
+      "paths": [
+        "interface/patient_file/history/history"
+      ],
       "title_re": "(?i)family (health )?history",
-      "tool": {"name": "ONC test procedure (demonstration)", "before_merge": false},
-      "hti5": {"action": "removed", "when": "2027-01-01"},
-      "mapping": "provisional"
+      "tool": {
+        "name": "ONC test procedure (demonstration)",
+        "before_merge": false
+      },
+      "hti5": {
+        "action": "removed",
+        "when": "2027-01-01"
+      },
+      "mapping": "provisional",
+      "certified_by": "attestation"
     },
     {
-      "id": "a14", "label": "(a)(14)", "title": "Implantable device list",
-      "certified": true, "kind": "ONC criterion",
+      "id": "a14",
+      "label": "(a)(14)",
+      "title": "Implantable device list",
+      "certified": true,
+      "kind": "ONC criterion",
       "relied_upon": "AccessGUDID Version 2 (OpenEMR's wiki)",
-      "paths": ["library/ajax/udi.php"],
+      "paths": [
+        "library/ajax/udi.php"
+      ],
       "title_re": "(?i)\\budi\\b|implantable",
-      "tool": {"name": "ONC test procedure (demonstration)", "before_merge": false},
-      "hti5": {"action": "removed", "when": "the final rule's effective date"},
-      "mapping": "provisional"
+      "tool": {
+        "name": "ONC test procedure (demonstration)",
+        "before_merge": false
+      },
+      "hti5": {
+        "action": "removed",
+        "when": "the final rule's effective date"
+      },
+      "mapping": "provisional",
+      "certified_by": "attestation"
     },
     {
-      "id": "e3", "label": "(e)(3)", "title": "Patient health information capture",
-      "certified": true, "kind": "ONC criterion",
-      "paths": ["portal/patient/libs/Controller/OnsiteDocumentController.php"],
+      "id": "e3",
+      "label": "(e)(3)",
+      "title": "Patient health information capture",
+      "certified": true,
+      "kind": "ONC criterion",
+      "paths": [
+        "portal/patient/libs/Controller/OnsiteDocumentController.php"
+      ],
       "title_re": "(?i)health information capture",
-      "tool": {"name": "ONC test procedure (demonstration)", "before_merge": false},
-      "hti5": {"action": "removed", "when": "2027-01-01"},
-      "mapping": "provisional"
+      "tool": {
+        "name": "ONC test procedure (demonstration)",
+        "before_merge": false
+      },
+      "hti5": {
+        "action": "removed",
+        "when": "2027-01-01"
+      },
+      "mapping": "provisional",
+      "certified_by": "attestation"
     },
     {
-      "id": "g2", "label": "(g)(2)", "title": "Automated measure calculation",
-      "certified": true, "kind": "ONC criterion",
-      "paths": ["library/classes/rulesets/Amc/", "interface/reports/amc"],
+      "id": "g2",
+      "label": "(g)(2)",
+      "title": "Automated measure calculation",
+      "certified": true,
+      "kind": "ONC criterion",
+      "paths": [
+        "library/classes/rulesets/Amc/",
+        "interface/reports/amc"
+      ],
       "title_re": "(?i)\\bamc\\b|automated measure",
-      "tool": {"name": "ONC test procedure (demonstration)", "before_merge": false},
-      "hti5": {"action": "removed", "when": "2027-01-01"},
+      "tool": {
+        "name": "ONC test procedure (demonstration)",
+        "before_merge": false
+      },
+      "hti5": {
+        "action": "removed",
+        "when": "2027-01-01"
+      },
       "mapping": "provisional"
     },
     {
-      "id": "h1", "label": "(h)(1)", "title": "Direct Project",
-      "certified": true, "kind": "ONC criterion",
+      "id": "h1",
+      "label": "(h)(1)",
+      "title": "Direct Project",
+      "certified": true,
+      "kind": "ONC criterion",
       "relied_upon": "EMR Direct Interoperability Engine 2017; the phiMail service (OpenEMR's wiki)",
-      "paths": ["library/direct_message_check.inc.php", "interface/reports/direct_message_log.php", "src/Common/DirectMessaging/", "interface/modules/zend_modules/module/Application/src/Application/Plugin/Phimail.php", "public/certs/phimail/", "ccr/transmitCCD.php"],
+      "paths": [
+        "library/direct_message_check.inc.php",
+        "interface/reports/direct_message_log.php",
+        "src/Common/DirectMessaging/",
+        "interface/modules/zend_modules/module/Application/src/Application/Plugin/Phimail.php",
+        "public/certs/phimail/",
+        "ccr/transmitCCD.php"
+      ],
       "title_re": "(?i)direct messag|phimail",
-      "tool": {"name": "ONC test procedure (with EMR Direct)", "before_merge": false},
-      "hti5": {"action": "removed", "when": "the final rule's effective date", "note": "the Direct transport standard itself stays in 170.202"},
-      "mapping": "provisional"
+      "tool": {
+        "name": "ONC Edge Testing Tool",
+        "before_merge": false
+      },
+      "hti5": {
+        "action": "removed",
+        "when": "the final rule's effective date",
+        "note": "the Direct transport standard itself stays in 170.202"
+      },
+      "mapping": "provisional",
+      "certified_by": "ONC test procedure with the Edge Testing Tool"
     },
     {
-      "id": "ps", "label": "(d)(1)–(d)(9), (d)(12), (d)(13)", "title": "Privacy and security",
-      "certified": true, "kind": "ONC criteria", "security": true,
-      "paths": ["src/Common/Acl/", "gacl/", "library/auth.inc.php", "src/Common/Auth/", "src/Common/Logging/", "src/Common/Crypto/", "interface/usergroup/"],
+      "id": "ps",
+      "label": "(d)(1)–(d)(9), (d)(12), (d)(13)",
+      "title": "Privacy and security",
+      "certified": true,
+      "kind": "ONC criteria",
+      "security": true,
+      "paths": [
+        "src/Common/Acl/",
+        "gacl/",
+        "library/auth.inc.php",
+        "src/Common/Auth/",
+        "src/Common/Logging/",
+        "src/Common/Crypto/",
+        "interface/usergroup/"
+      ],
       "title_re": "(?i)\\bacls?\\b|access control|audit log|\\bmfa\\b|two.?factor",
-      "tool": {"name": "ONC test procedures", "before_merge": false},
-      "hti5": {"action": "removed", "when": "the final rule's effective date", "note": "all thirteen; an alternative proposal keeps the audit criteria. HIPAA's own requirements stay either way."},
+      "tool": {
+        "name": "ONC test procedures",
+        "before_merge": false
+      },
+      "hti5": {
+        "action": "removed",
+        "when": "the final rule's effective date",
+        "note": "all thirteen; an alternative proposal keeps the audit criteria. HIPAA's own requirements stay either way."
+      },
       "security_note": "Listed so these PRs reach the maintainers' security review. This map doesn't analyse them.",
-      "mapping": "provisional"
+      "mapping": "provisional",
+      "certified_by": "attestation"
     },
     {
-      "id": "pubhealth", "label": "(f)(1), (f)(2)", "title": "Immunization registries and syndromic surveillance (HL7 v2)",
-      "certified": false, "kind": "ONC criteria, not in OpenEMR 8's certification",
-      "standards": ["CDC's HL7 v2.5.1 implementation guide for immunization messaging", "PHIN syndromic surveillance messaging guide"],
-      "paths": ["interface/modules/zend_modules/module/Immunization/", "interface/modules/zend_modules/module/Syndromicsurveillance/", "interface/reports/immunization_report.php", "interface/modules/zend_modules/module/Application/src/Application/Helper/SendToHieHelper.php"],
+      "id": "pubhealth",
+      "label": "(f)(1), (f)(2)",
+      "title": "Immunization registries and syndromic surveillance (HL7 v2)",
+      "certified": false,
+      "kind": "ONC criteria, not in OpenEMR 8's certification",
+      "standards": [
+        "CDC's HL7 v2.5.1 implementation guide for immunization messaging",
+        "PHIN syndromic surveillance messaging guide"
+      ],
+      "paths": [
+        "interface/modules/zend_modules/module/Immunization/",
+        "interface/modules/zend_modules/module/Syndromicsurveillance/",
+        "interface/reports/immunization_report.php",
+        "interface/modules/zend_modules/module/Application/src/Application/Helper/SendToHieHelper.php"
+      ],
       "title_re": "(?i)syndromic|immunization registr|\\biis\\b",
-      "tool": {"name": "NIST HL7 v2 validators", "before_merge": true},
-      "hti5": {"action": "kept"},
+      "tool": {
+        "name": "NIST HL7 v2 validators",
+        "before_merge": true
+      },
+      "hti5": {
+        "action": "kept"
+      },
       "mapping": "provisional"
     },
     {
-      "id": "erx", "label": "(b)(3)", "title": "Electronic prescribing",
-      "certified": false, "kind": "ONC criterion, not in OpenEMR 8's certification",
-      "paths": ["interface/eRx", "interface/modules/custom_modules/oe-module-weno/"],
+      "id": "erx",
+      "label": "(b)(3)",
+      "title": "Electronic prescribing",
+      "certified": false,
+      "kind": "ONC criterion, not in OpenEMR 8's certification",
+      "paths": [
+        "interface/eRx",
+        "interface/modules/custom_modules/oe-module-weno/"
+      ],
       "title_re": "(?i)e-?prescrib|\\berx\\b",
-      "tool": {"name": "the vendor's certification", "before_merge": false},
-      "hti5": {"action": "kept", "note": "HTI-4 moves it to NCPDP SCRIPT 2023011 and requires (b)(4) real-time benefit from 2028-01-01"},
+      "tool": {
+        "name": "the vendor's certification",
+        "before_merge": false
+      },
+      "hti5": {
+        "action": "kept",
+        "note": "HTI-4 moves it to NCPDP SCRIPT 2023011 and requires (b)(4) real-time benefit from 2028-01-01"
+      },
       "note": "The 2026-10-20 weekly meeting agreed the goal is a certified (b)(3) companion product, with other options as modules. Which product is for the project's leadership; this map stays neutral.",
       "mapping": "provisional"
     },
     {
-      "id": "a11y", "label": "Section 504", "title": "Web accessibility (WCAG 2.1 AA) for patient-facing pages",
-      "certified": false, "kind": "HHS rule for sites that receive HHS funding, not an ONC criterion",
-      "standards": ["WCAG 2.1 AA"],
-      "paths": ["portal/", "templates/portal/"],
+      "id": "a11y",
+      "label": "Section 504",
+      "title": "Web accessibility (WCAG 2.1 AA) for patient-facing pages",
+      "certified": false,
+      "kind": "HHS rule for sites that receive HHS funding, not an ONC criterion",
+      "standards": [
+        "WCAG 2.1 AA"
+      ],
+      "paths": [
+        "portal/",
+        "templates/portal/"
+      ],
       "title_re": "(?i)\\bwcag\\b|accessibilit|screen reader",
-      "tool": {"name": "axe-core", "url": "https://github.com/dequelabs/axe-core", "before_merge": true},
+      "tool": {
+        "name": "axe-core",
+        "url": "https://github.com/dequelabs/axe-core",
+        "before_merge": true
+      },
       "deadline": "2027-05-11 for recipients with 15 or more employees, 2028-05-10 for smaller ones (HHS interim final rule of 2026-05-07)",
       "url": "https://www.hhs.gov/press-room/hhs-extends-mobile-and-web-accessibility-deadline.html",
       "mapping": "provisional"
     }
   ],
   "process": [
-    {"label": "(g)(3)", "title": "Safety-enhanced design", "hti5": {"action": "removed", "when": "the final rule's effective date"}},
-    {"label": "(g)(4)", "title": "Quality management system", "hti5": {"action": "removed", "when": "the final rule's effective date"}},
-    {"label": "(g)(5)", "title": "Accessibility-centered design", "hti5": {"action": "removed", "when": "the final rule's effective date"}},
-    {"label": "(g)(6)", "title": "C-CDA creation performance", "hti5": {"action": "removed", "when": "the final rule's effective date"}},
-    {"label": "(g)(7)", "title": "Application access: patient selection", "hti5": {"action": "removed", "when": "2027-01-01"}},
-    {"label": "(g)(9)", "title": "Application access: all data request", "hti5": {"action": "removed", "when": "2027-01-01"}}
+    {
+      "label": "(g)(3)",
+      "title": "Safety-enhanced design",
+      "hti5": {
+        "action": "removed",
+        "when": "the final rule's effective date"
+      }
+    },
+    {
+      "label": "(g)(4)",
+      "title": "Quality management system",
+      "hti5": {
+        "action": "removed",
+        "when": "the final rule's effective date"
+      }
+    },
+    {
+      "label": "(g)(5)",
+      "title": "Accessibility-centered design",
+      "hti5": {
+        "action": "removed",
+        "when": "the final rule's effective date"
+      }
+    },
+    {
+      "label": "(g)(6)",
+      "title": "C-CDA creation performance",
+      "hti5": {
+        "action": "removed",
+        "when": "the final rule's effective date"
+      }
+    },
+    {
+      "label": "(g)(7)",
+      "title": "Application access: patient selection",
+      "hti5": {
+        "action": "removed",
+        "when": "2027-01-01"
+      }
+    },
+    {
+      "label": "(g)(9)",
+      "title": "Application access: all data request",
+      "hti5": {
+        "action": "removed",
+        "when": "2027-01-01"
+      }
+    }
   ],
   "process_note": "Certified, but met by documents, a process or the API as a whole rather than by particular files, so no PR is matched to them here.",
   "controls": [
-    {"files": ["src/Services/FHIR/FhirTaskService.php"], "expect": ["g10"]},
-    {"files": ["src/Services/Cda/CdaTemplateParse.php"], "expect": ["b1"]},
-    {"files": ["interface/modules/zend_modules/module/Immunization/src/Immunization/Controller/ImmunizationController.php"], "expect": ["pubhealth"]},
-    {"files": ["src/Common/Logging/EventAuditLogger.php"], "expect": ["ps"]},
-    {"files": ["Documentation/Configuration_Export_Import.md"], "expect": []},
-    {"files": [], "title": "fix(ccda): import body weight sent as LOINC 29463-7", "expect": ["b1"]},
-    {"pr": 14669, "expect": ["g10"]},
-    {"pr": 14522, "expect": []}
+    {
+      "files": [
+        "src/Services/FHIR/FhirTaskService.php"
+      ],
+      "expect": [
+        "g10"
+      ]
+    },
+    {
+      "files": [
+        "src/Services/Cda/CdaTemplateParse.php"
+      ],
+      "expect": [
+        "b1"
+      ]
+    },
+    {
+      "files": [
+        "interface/modules/zend_modules/module/Immunization/src/Immunization/Controller/ImmunizationController.php"
+      ],
+      "expect": [
+        "pubhealth"
+      ]
+    },
+    {
+      "files": [
+        "src/Common/Logging/EventAuditLogger.php"
+      ],
+      "expect": [
+        "ps"
+      ]
+    },
+    {
+      "files": [
+        "Documentation/Configuration_Export_Import.md"
+      ],
+      "expect": []
+    },
+    {
+      "files": [],
+      "title": "fix(ccda): import body weight sent as LOINC 29463-7",
+      "expect": [
+        "b1"
+      ]
+    },
+    {
+      "pr": 14669,
+      "expect": [
+        "g10"
+      ]
+    },
+    {
+      "pr": 14522,
+      "expect": []
+    }
   ]
 }

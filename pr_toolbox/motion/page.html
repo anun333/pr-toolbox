@@ -486,7 +486,9 @@ function renderConformance() {
   if (CONF.heading) $("#conf-heading").textContent = CONF.heading;
   const src = CONF.source, rule = CONF.rule;
   const head = `<div class="panel"><ul class="plain">
-    ${src ? `<li><b>${esc(src.certification)}.</b> The criteria come from <a href="${esc(src.url)}">${esc(src.criteria_from)}</a>${src.chpl ? ` (<a href="${esc(src.chpl)}">CHPL listing</a>)` : ""}, checked ${esc(src.checked)}.</li>` : ""}
+    ${src ? `<li><b>${esc(src.certification)}.</b> The criteria come from <a href="${esc(src.url)}">${esc(src.criteria_from)}</a>, checked ${esc(src.checked)}.</li>` : ""}
+    ${src && src.official_findings ? `<li><b>Official findings:</b> ${esc(src.official_findings)}</li>` : ""}
+    ${src && src.methods ? `<li class="muted">${esc(src.methods)}</li>` : ""}
     ${rule ? `<li><b>${esc(rule.name)}, ${esc(rule.state)}:</b> ${esc(rule.text)} <a href="${esc(rule.url)}">The proposed rule</a>${rule.summary_url ? `, <a href="${esc(rule.summary_url)}">its overview</a>` : ""}; checked ${esc(rule.checked)}.</li>` : ""}
     <li class="muted">The code paths are this map's reading of the code (each marked provisional), checked by controls that ran before this page was built. Privacy and security criteria are labelled so PRs reach their reviewers; this map doesn't analyse them.</li></ul></div>`;
   const specs = CONF.specs.map((s) => {
@@ -496,6 +498,7 @@ function renderConformance() {
       ${li(`${s.certified ? '<span class="pill ok">certified</span>' : '<span class="pill info">not certified</span>'} <span class="muted">${esc(s.kind || "")}${s.mapping === "provisional" ? " · mapping provisional" : ""}</span>`)}
       ${(s.standards || []).length ? li(`Standards: ${s.standards.map(esc).join(" · ")}${s.standards_source ? ` <span class="muted">(${esc(s.standards_source)})</span>` : ""}`) : ""}
       ${s.relied_upon ? li(`Relied-upon software: ${esc(s.relied_upon)}`) : ""}
+      ${s.certified_by ? li(`Certified by: ${esc(s.certified_by)}`) : ""}
       ${li(`Tested with ${toolLine(s.tool)}`)}
       ${s.hti5 ? li(`${rulePill(s.hti5)}${s.hti5.note ? ` <span class="muted">${esc(s.hti5.note)}</span>` : ""}`) : ""}
       ${s.deadline ? li(`<span class="pill info">deadline</span> ${esc(s.deadline)}${s.url ? ` · <a href="${esc(s.url)}">source</a>` : ""}`) : ""}

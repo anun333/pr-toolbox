@@ -5,8 +5,8 @@ head commit), master and each PR's head fetched as refs/pr/<n>, and the plan iss
 
     python3 -I fetch.py <clone> <cache dir>
 
-Writes <cache>/open-prs.txt, pr-meta.json, pr-bodies.json, pr-extra.json and issues/<n>.json. Reads GitHub records
-as data; runs nothing from them.
+Writes <cache>/open-prs.txt, pr-meta.json, pr-bodies.json, pr-extra.json and issues/<n>.json for the PRs aimed at
+the base, and other-bases.json naming the rest. Reads GitHub records as data; runs nothing from them.
 """
 import json
 import re
@@ -80,16 +80,43 @@ def run(*args, check=True):
     return r.stdout
 
 
-prs, cursor = [], None
-while True:
-    args = ["gh", "api", "graphql", "-f", f"query={QUERY}"] + (["-f", f"cursor={cursor}"] if cursor else [])
-    page = json.loads(run(*args))["data"]["repository"]["pullRequests"]
-    prs += page["nodes"]
-    if not page["pageInfo"]["hasNextPage"]:
-        break
-    cursor = page["pageInfo"]["endCursor"]
+def read_pages(call, size=25, least=5):
+    """Every node of a paged GraphQL connection; call(size, cursor) -> (returncode, stdout, stderr). A page of PRs with
+    many checks each can take GitHub past its 10-second limit (a 502, a 504, or a reply cut off mid-stream), so a page
+    that fails is asked for again at half the size, down to `least`."""
+    nodes, cursor = [], None
+    while True:
+        code, out, err = call(size, cursor)
+        if code and size > least:
+            size = max(least, size // 2)
+            continue
+        if code:
+            raise SystemExit(f"gh api graphql: {err.strip()[:300]}")
+        page = json.loads(out)["data"]["repository"]["pullRequests"]
+        nodes += page["nodes"]
+        if not page["pageInfo"]["hasNextPage"]:
+            return nodes
+        cursor = page["pageInfo"]["endCursor"]
+
+
+def split_by_base(prs, base):
+    """(PRs aimed at the base, the rest). A PR aimed at another branch, such as a release branch's backport, merges onto
+    that branch: merged onto the base it would carry every commit between the two, and meet everything."""
+    return [p for p in prs if p["baseRefName"] == base], [p for p in prs if p["baseRefName"] != base]
+
+
+def _query(size, cursor):
+    args = ["gh", "api", "graphql", "-f", f"query={QUERY.replace('first: 25', f'first: {size}', 1)}"] + (["-f", f"cursor={cursor}"] if cursor else [])
+    r = subprocess.run(args, capture_output=True, text=True)
+    return r.returncode, r.stdout, r.stderr
+
+
+prs = read_pages(_query)
 if len(prs) < 50:
     raise SystemExit(f"only {len(prs)} open PRs came back; refusing to build on that")
+prs, others = split_by_base(prs, P["base_branch"])
+(C / "other-bases.json").write_text(json.dumps([{"number": p["number"], "title": p["title"], "base": p["baseRefName"],
+                                                 "by": (p.get("author") or {}).get("login") or "ghost"} for p in others]))
 
 meta, bodies, extra = [], [], {}
 for p in prs:
@@ -129,26 +156,45 @@ MERGED = """query($q: String!, $cursor: String) { search(query: $q, type: ISSUE,
 mergers = {}
 
 
-def merged_between(start, end):
-    """Counts each merger in [start, end], halving the window while search would cut it off at 1,000."""
-    q, cursor = f"repo:{P['github']} is:pr is:merged merged:{start}..{end}", None
+def merged_between(start, end, tries=3):
+    """Counts each merger in [start, end], halving the window while search would cut it off at 1,000. Under load, search
+    can also end a window early with no error, on a page whose count reads 0, the first page included (decidim/decidim
+    on 2026-10-22: 400 of a window's merges read; 100 of 420 on another). A read is whole when every page gives the same
+    count and that many merges came back; one that isn't is read again, then halved, and a single day that stays short
+    stops the build. Counts join the total only once their window is whole."""
+    q, cursor, expected, seen, found, counts = f"repo:{P['github']} is:pr is:merged merged:{start}..{end}", None, None, 0, {}, set()
     while True:
         args = ["gh", "api", "graphql", "-f", f"query={MERGED}", "-f", f"q={q}"] + (["-f", f"cursor={cursor}"] if cursor else [])
         page = json.loads(run(*args))["data"]["search"]
-        if page["issueCount"] > 1000:
-            if start == end:
-                raise SystemExit(f"{q}: over 1,000 merges in one day")
-            mid = start + (end - start) // 2
-            merged_between(start, mid)
-            merged_between(mid + timedelta(days=1), end)
-            return
+        if expected is None:
+            if page["issueCount"] > 1000:
+                if start == end:
+                    raise SystemExit(f"{q}: over 1,000 merges in one day")
+                mid = start + (end - start) // 2
+                merged_between(start, mid)
+                merged_between(mid + timedelta(days=1), end)
+                return
+            expected = page["issueCount"]
+        counts.add(page["issueCount"])
+        seen += len(page["nodes"])
         for node in page["nodes"]:
             login = (node.get("mergedBy") or {}).get("login")
             if login:
-                mergers[login] = mergers.get(login, 0) + 1
+                found[login] = found.get(login, 0) + 1
         if not page["pageInfo"]["hasNextPage"]:
-            return
+            break
         cursor = page["pageInfo"]["endCursor"]
+    if seen != expected or len(counts) > 1:
+        if tries > 1:
+            return merged_between(start, end, tries - 1)
+        if start == end:
+            raise SystemExit(f"{q}: search returned {seen} of {expected} merges")
+        mid = start + (end - start) // 2
+        merged_between(start, mid)
+        merged_between(mid + timedelta(days=1), end)
+        return
+    for login, k in found.items():
+        mergers[login] = mergers.get(login, 0) + k
 
 
 merged_between(date.today() - timedelta(days=365), date.today())
@@ -179,6 +225,6 @@ for n in cited:
     out = run("gh", "api", f"repos/{P['github']}/issues/{n}", "--jq",
               "{number,title,state,user:.user.login,updated_at,labels:[.labels[].name],body,comments,pr:(.pull_request!=null)}", check=False)
     (C / "issues" / f"{n}.json").write_text(out or "{}")
-print(json.dumps({"open_prs": len(prs), "drafts": sum(p["isDraft"] for p in prs), "heads_fetched": len(numbers) - len(missing),
+print(json.dumps({"open_prs": len(prs), "other_bases": len(others), "drafts": sum(p["isDraft"] for p in prs), "heads_fetched": len(numbers) - len(missing),
                   "ci": {s: sum(1 for e in extra.values() if e["ci"] == s) for s in ("SUCCESS", "FAILURE", "ERROR", "PENDING", "EXPECTED", None)},
                   "plan_issues": len(plan), "mergers_past_year": mergers}))

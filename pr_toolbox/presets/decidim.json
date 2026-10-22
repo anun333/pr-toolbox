@@ -1,0 +1,34 @@
+{
+  "name": "decidim",
+  "description": "Decidim (decidim/decidim): a Ruby on Rails monorepo of decidim-* gems; lint runs on every PR, each module's tests only when its files change.",
+  "health_ignore": "^(codecov/.*)$",
+  "motion": {
+    "title": "Decidim Work in Motion",
+    "project": "Decidim",
+    "ci_required": "^Lint code \\(",
+    "mass_files": 150,
+    "mechanical": "^(Gemfile\\.lock|decidim-generators/Gemfile\\.lock|package-lock\\.json|\\.rubocop_todo\\.yml|RELEASE_NOTES\\.md|CHANGELOG\\.md|config/i18n-tasks\\.yml|.*/config/locales/(?!en\\.yml$)[^/]+\\.yml)$",
+    "mechanical_note": "the lockfiles, RELEASE_NOTES.md, the RuboCop to-do list, i18n-tasks.yml and the locale files Crowdin manages (every language but en.yml)",
+    "skip_labels": ["team: security"],
+    "placeholder_issues": [],
+    "left_out_paths": [],
+    "left_out_re": "(?i)(^|/)permissions(\\.rb$|/)|authoriz",
+    "left_out_note": "permission and authorization code",
+    "maintainer_roles": ["OWNER", "MEMBER"],
+    "bots": "(\\[bot\\]$|-bot$|^dependabot$|^coderabbitai$|^greptile-apps$|^qltysh$|^github-advanced-security$|^copilot-pull-request-reviewer$)",
+    "code_files": ["*.rb", "*.erb", "*.js", "*.mjs", "*.ts", "*.scss", "*.yml", ":!*/spec/*", ":!spec/*", ":!*/vendor/*", ":!node_modules"],
+    "symbols": null,
+    "name_paths": ["*/db/migrate/*", "*/lib/*.rb"],
+    "names": [
+      {"kind": "migration", "where": {"contains": "/db/migrate/"}, "pattern": "^\\s*class (\\w+) < ActiveRecord::Migration"},
+      {"kind": "table", "where": {"contains": "/db/migrate/"}, "pattern": "create_table[ (]:?\"?(\\w+)"},
+      {"kind": "content block", "where": {"suffix": ".rb"}, "pattern": "content_blocks\\.register\\(:(\\w+),\\s*:(\\w+)", "format": "{0}/{1}"},
+      {"kind": "environment variable", "where": {"suffix": ".rb"}, "pattern": "Decidim::Env\\.new\\(\"([A-Z][A-Z0-9_]+)\""},
+      {"kind": "Decidim setting", "where": {"equals": "decidim-core/lib/decidim/core.rb"}, "pattern": "^\\s*mattr_accessor :(\\w+)"}
+    ],
+    "anchors": {"test_re": "(^|/)spec/"},
+    "invited_labels": ["good first issue", "help welcome"],
+    "streams": "decidim-motion-streams.json",
+    "controls": "decidim-motion-controls.json"
+  }
+}

@@ -248,16 +248,20 @@ class MotionFixture(unittest.TestCase):
             return {"t": "PR", "by": "someone", "draft": False, "ci": "SUCCESS", "rebase": False, "maint": "", "maint_by": "",
                     "shortlist": False, "head": "x", **over}
         two_days = {"at": (datetime.now() - timedelta(days=2)).isoformat(timespec="seconds"), "master": "a" * 40, "code_pairs": [],
-                    "prs": {"1": pr_state(), "2": pr_state(), "8": pr_state(shortlist=True), "99": pr_state(t="Gone PR")}}
+                    "prs": {"1": pr_state(), "2": pr_state(), "8": pr_state(shortlist=True), "99": pr_state(t="Gone PR"), "98": pr_state(t="Retargeted")}}
         an_hour = {**two_days, "at": (datetime.now() - timedelta(hours=1)).isoformat(timespec="seconds"),
                    "prs": {**two_days["prs"], "8": pr_state(shortlist=False)}}
         (hist / "20261001T000000.json").write_text(json.dumps(two_days))
         (hist / "20261002T000000.json").write_text(json.dumps(an_hour))
+        # 98 is still open, now aimed at a release branch: it left the list, but it was neither merged nor closed
+        (self.tmp / "inputs" / "other-bases.json").write_text(json.dumps([{"number": 98, "title": "Retargeted", "base": "release/1.0", "by": "someone"}]))
         r = self.page("New code goes in src/, and every change needs a test.")
+        (self.tmp / "inputs" / "other-bases.json").unlink()
         self.assertEqual(r.returncode, 0, r.stderr[-1500:])
         since = json.loads((self.work / "map.json").read_text())["since"]
         self.assertEqual(two_days["at"], since["at"], "the hour-old build is too recent to compare with")
         self.assertEqual([99], [x["n"] for x in since["gone"]], "offline, a PR no longer open is neither merged nor closed")
+        self.assertEqual([(98, "release/1.0")], [(x["n"], x["base"]) for x in since["elsewhere"]], "a PR aimed elsewhere is still open")
         self.assertIn(9, since["new"])
         self.assertEqual([8], [x["n"] for x in since["left"]])
         self.assertIn("version number", since["left"][0]["why"], "8 and 9 claim one version number")
@@ -442,6 +446,87 @@ class CiState(unittest.TestCase):
             self.assertEqual((health["ci"], health["failing"]), (words[state], failing), checks)
 
 
+class FetchPages(unittest.TestCase):
+    """The PR list survives GitHub's 10-second limit, and PRs aimed at another branch are set apart."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        import ast
+        tree = ast.parse((MOTION / "fetch.py").read_text())
+        keep = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in {"read_pages", "split_by_base"}]
+        cls.ns = {"json": json}
+        exec(compile(ast.Module(body=keep, type_ignores=[]), "fetch.py", "exec"), cls.ns)
+
+    def test_a_page_that_times_out_is_asked_for_at_half_the_size(self) -> None:
+        # decidim/decidim on 2026-10-22: 25 PRs with about 40 checks each took 9.8s, and some pages came back 504
+        asked = []
+
+        def call(size, cursor):
+            asked.append((size, cursor))
+            if size > 10:
+                return 1, "", "gh: HTTP 504"
+            last = cursor == "c1"
+            page = {"nodes": [{"number": 2 if last else 1}], "pageInfo": {"hasNextPage": not last, "endCursor": "c1"}}
+            return 0, json.dumps({"data": {"repository": {"pullRequests": page}}}), ""
+        self.assertEqual([1, 2], [p["number"] for p in self.ns["read_pages"](call)])
+        self.assertEqual([(25, None), (12, None), (6, None), (6, "c1")], asked)
+
+    def test_a_page_that_keeps_failing_stops_the_build(self) -> None:
+        with self.assertRaises(SystemExit) as stop:
+            self.ns["read_pages"](lambda size, cursor: (1, "", "gh: HTTP 401 Bad credentials"))
+        self.assertIn("401", str(stop.exception))
+
+    def test_a_search_window_read_short_is_read_again(self) -> None:
+        import ast
+        from datetime import date, timedelta
+        tree = ast.parse((MOTION / "fetch.py").read_text())
+        keep = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "merged_between"]
+        reads = []
+
+        def run(*args):
+            # three merges in the window; the first read ends early, as GitHub's search did, with an empty page counting 0
+            cursor = next((a.split("=", 1)[1] for a in args if a.startswith("cursor=")), None)
+            reads.append(cursor)
+            short = reads.count(None) == 1
+            if cursor is None:
+                page = {"issueCount": 3, "nodes": [{"mergedBy": {"login": "a"}}, {"mergedBy": {"login": "b"}}], "pageInfo": {"hasNextPage": True, "endCursor": "c"}}
+            else:
+                page = {"issueCount": 0 if short else 3, "nodes": [] if short else [{"mergedBy": {"login": "a"}}], "pageInfo": {"hasNextPage": False, "endCursor": None}}
+            return json.dumps({"data": {"search": page}})
+        ns = {"json": json, "timedelta": timedelta, "run": run, "P": {"github": "o/r"}, "MERGED": "", "mergers": {}}
+        exec(compile(ast.Module(body=keep, type_ignores=[]), "fetch.py", "exec"), ns)
+        ns["merged_between"](date(2026, 1, 1), date(2026, 1, 1))
+        self.assertEqual({"a": 2, "b": 1}, ns["mergers"], "the short read counts nothing; the whole one counts once")
+        self.assertEqual([None, "c", None, "c"], reads)
+
+        # the first page itself can be wrong: a count of 0, some merges, and no next page
+        firsts = []
+
+        def first_page_wrong(*args):
+            firsts.append(1)
+            whole = len(firsts) > 1
+            page = {"issueCount": 2 if whole else 0, "nodes": [{"mergedBy": {"login": "a"}}] * (2 if whole else 1), "pageInfo": {"hasNextPage": False, "endCursor": None}}
+            return json.dumps({"data": {"search": page}})
+        ns.update(run=first_page_wrong, mergers={})
+        exec(compile(ast.Module(body=keep, type_ignores=[]), "fetch.py", "exec"), ns)
+        ns["merged_between"](date(2026, 1, 1), date(2026, 1, 1))
+        self.assertEqual({"a": 2}, ns["mergers"])
+
+        def always_short(*args):
+            first = not any(a.startswith("cursor=") for a in args)
+            page = {"issueCount": 3 if first else 0, "nodes": [], "pageInfo": {"hasNextPage": first, "endCursor": "c"}}
+            return json.dumps({"data": {"search": page}})
+        ns.update(run=always_short, mergers={})
+        exec(compile(ast.Module(body=keep, type_ignores=[]), "fetch.py", "exec"), ns)
+        with self.assertRaises(SystemExit, msg="a single day that stays short stops the build"):
+            ns["merged_between"](date(2026, 1, 1), date(2026, 1, 1))
+
+    def test_prs_aimed_at_another_branch_are_set_apart(self) -> None:
+        prs = [{"number": 1, "baseRefName": "develop"}, {"number": 2, "baseRefName": "release/0.31-stable"}, {"number": 3, "baseRefName": "develop"}]
+        on, off = self.ns["split_by_base"](prs, "develop")
+        self.assertEqual(([1, 3], [2]), ([p["number"] for p in on], [p["number"] for p in off]))
+
+
 class CheckPage(unittest.TestCase):
     """check-page runs the browser checks with this Python's Playwright, else in Playwright's image, else says what it needs."""
 
@@ -535,6 +620,34 @@ class Profiles(unittest.TestCase):
         failures, notes = conformance.check(conf, base, {}, flows, " ".join(f"'{n}'" for n in names))
         self.assertEqual(failures, [])
         self.assertTrue(all("no longer open" in n for n in notes))
+
+    def test_decidim_preset(self) -> None:
+        from pr_toolbox import common
+        self.assertEqual(common.PRESET_FOR_REPO["decidim/decidim"], "decidim")
+        cfg = common.load_config(Path("."), "decidim/decidim", preset="decidim")
+        p = cli.resolve_profile(common.Target(Path("."), "origin", "decidim/decidim", "develop", cfg), None)
+        self.assertEqual(p["title"], "Decidim Work in Motion")
+        # lint runs on every PR; a first-time contributor's fork PR carries only the title check until approved
+        self.assertRegex("Lint code (bundle exec rubocop -P)", p["ci_required"])
+        self.assertNotRegex("Check PR title", p["ci_required"])
+        for path in ("Gemfile.lock", "decidim-generators/Gemfile.lock", "RELEASE_NOTES.md", "decidim-core/config/locales/ca.yml"):
+            self.assertRegex(path, p["mechanical"])
+        for path in ("decidim-core/config/locales/en.yml", "decidim-core/lib/decidim/core.rb", "Gemfile"):
+            self.assertNotRegex(path, p["mechanical"], "en.yml is written by hand; only Crowdin's locales are mechanical")
+        kinds = {k["kind"]: re.compile(k["pattern"]) for k in p["names"]}
+        found = {
+            "migration": "class AddFailedAttemptsToDecidimAuthorizations < ActiveRecord::Migration[7.2]",
+            "table": "    create_table :decidim_ai_spam_detection_stats do |t|",
+            "content block": 'Decidim.content_blocks.register(:homepage, :highlighted_assemblies) do |content_block|',
+            "environment variable": 'config_accessor :x, default: Decidim::Env.new("DECIDIM_THROTTLING_PERIOD", "1").to_i',
+            "Decidim setting": "  mattr_accessor :throttling_period, default: 1",
+        }
+        missed = {"migration": "  # see AddFoo < ActiveRecord::Migration", "environment variable": 'ENV.fetch("DECIDIM_THROTTLING_PERIOD")',
+                  "Decidim setting": "  attr_accessor :throttling_period"}
+        for kind, line in found.items():
+            self.assertTrue(kinds[kind].findall(line), kind)
+        for kind, line in missed.items():
+            self.assertFalse(kinds[kind].findall(line), f"{kind}: {line}")
 
     def test_the_page_names_the_release_that_built_it(self) -> None:
         from pr_toolbox import __version__, common

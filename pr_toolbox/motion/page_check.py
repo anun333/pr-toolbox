@@ -196,6 +196,20 @@ def desktop(pg):
         press(pg, "#f-certified")
         check("conformance: the filter shows every PR touching a certified criterion", count_shown(pg) == want, f"page {count_shown(pg)}, build {want}")
         press(pg, "#f-certified")
+    if not MAP.get("streams"):
+        text = pg.inner_text("#area-list")
+        check("with no areas, the section says the profile names none", text.startswith("No areas yet"), text[:80])
+    # open PRs aimed at another branch are named under the limits, and neither compared nor listed as over the file limit
+    others = [str(o["number"]) for o in MAP.get("other_bases", [])]
+    named = pg.eval_on_selector("#other-bases", "e => e.textContent") if others and pg.query_selector("#other-bases") else ""
+    stray = [n for n in others if n in PRS or n in MAP["stamp"]["mass"]]
+    check("PRs aimed at another branch are named, not compared", "other_bases" in MAP and all(f"#{n}" in named for n in others) and not stray,
+          f"{len(others)} named; compared anyway: {stray}" if "other_bases" in MAP else "the page doesn't say which PRs aim at another branch")
+    # a PR that left the list but is still open (now aimed at another branch) was neither merged nor closed
+    s = MAP.get("since") or {}
+    left = {x["n"] for k in ("merged", "closed", "gone") for x in s.get(k, [])}
+    still_open = sorted(left & ({o["number"] for o in MAP.get("other_bases", [])} | {int(n) for n in PRS}))
+    check("since the last build: no PR still open is called merged, closed or gone", not still_open, still_open)
     since = pg.inner_text("#since") if pg.query_selector("#since") else ""
     check("since the last build is shown", since.startswith("Since") or since.startswith("No earlier build"), since[:100])
     check("the header names the tool and how to rebuild", "pr-toolbox" in pg.inner_text("#stamp") and pg.query_selector("#rebuild") is not None)

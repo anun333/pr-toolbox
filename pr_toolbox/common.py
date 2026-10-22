@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 PRESETS = Path(__file__).resolve().parent / "presets"
-PRESET_FOR_REPO = {"openemr/openemr": "openemr"}
+PRESET_FOR_REPO = {"openemr/openemr": "openemr", "decidim/decidim": "decidim"}
 CONFIG_NAME = ".pr-toolbox.json"
 OLD_CONFIG_NAMES = [".pr-tools.json"]
 

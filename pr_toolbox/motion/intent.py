@@ -413,6 +413,8 @@ data["profile"]["version_file"] = (P.get("version_claims") or {}).get("file")
 data["profile"]["resource_label"] = P["anchors"].get("resource_label")
 data["general_heading"] = streams.get("general_heading")
 data["controls"] = json.loads((W / "controls-result.json").read_text()) if (W / "controls-result.json").exists() else []
+# open PRs aimed at another branch (a release branch's backports): named, not compared, since they merge elsewhere
+data["other_bases"] = json.loads((G / "other-bases.json").read_text()) if (G / "other-bases.json").exists() else []
 
 # --- semantic readings (judgement): pairs read by agents from the packets, each checked by a second reading ---
 SEM = G / "semantic"
@@ -547,14 +549,16 @@ data["since"] = None
 if base_f:
     before = json.loads(base_f.read_text())
     old = {int(k): v for k, v in before["prs"].items()}
-    gone = sorted(set(old) - set(prs_out))
+    # a PR now aimed at another branch left the list but is still open: neither merged nor closed
+    elsewhere = {o["number"]: o["base"] for o in data["other_bases"]}
+    gone = sorted(set(old) - set(prs_out) - set(elsewhere))
     fates = {}
     for n in gone[:40]:
         if os.environ.get("WIM_OFFLINE"):
             break
-        r = subprocess.run(["gh", "api", f"repos/{P['github']}/pulls/{n}", "--jq", "{merged: .merged, by: (.merged_by.login // \"\")}"],
+        r = subprocess.run(["gh", "api", f"repos/{P['github']}/pulls/{n}", "--jq", "{state: .state, merged: .merged, by: (.merged_by.login // \"\")}"],
                            capture_output=True, text=True)
-        if r.returncode == 0 and r.stdout.strip():
+        if r.returncode == 0 and r.stdout.strip() and json.loads(r.stdout)["state"] == "closed":
             fates[n] = json.loads(r.stdout)
     both = set(old) & set(prs_out)
     old_pairs = {tuple(x) for x in before.get("code_pairs", [])}
@@ -563,6 +567,7 @@ if base_f:
         "merged": [{"n": n, "t": old[n]["t"], "by": old[n]["by"], "merged_by": fates[n]["by"]} for n in gone if fates.get(n, {}).get("merged")],
         "closed": [{"n": n, "t": old[n]["t"], "by": old[n]["by"]} for n in gone if n in fates and not fates[n]["merged"]],
         "gone": [{"n": n, "t": old[n]["t"], "by": old[n]["by"]} for n in gone if n not in fates],
+        "elsewhere": [{"n": n, "t": old[n]["t"], "by": old[n]["by"], "base": elsewhere[n]} for n in sorted(set(old) & set(elsewhere))],
         "new": sorted(n for n in prs_out if n not in old),
         "entered": sorted(n for n in prs_out if prs_out[n]["shortlist"] and not old.get(n, {}).get("shortlist")),
         "left": [{"n": n, "why": blockers(n, prs_out[n])} for n in sorted(both) if old[n]["shortlist"] and not prs_out[n]["shortlist"]],

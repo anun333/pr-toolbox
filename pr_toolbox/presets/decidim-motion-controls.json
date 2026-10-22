@@ -1,0 +1,26 @@
+{
+  "_about": "Known cases each check must find (or must not flag). A control whose PRs are no longer all open is retired, not failed; replace it with a current case when that happens.",
+  "controls": [
+    {
+      "name": "text conflict: #17305 and #17791 both change the admin verifications controller, and conflict there once both are merged",
+      "prs": [17305, 17791],
+      "in": "text_conflict",
+      "match": {"how": "onto master"},
+      "contains": [17305, 17791]
+    },
+    {
+      "name": "no text conflict: #17160 and #17791 share 18 files and still merge cleanly, so they must not be flagged",
+      "prs": [17160, 17791],
+      "in": "text_conflict",
+      "match": {},
+      "contains": [17160, 17791],
+      "expect": "absent"
+    },
+    {
+      "name": "conflicts with the base: #16517 no longer merges onto develop",
+      "prs": [16517],
+      "in": "master_conflicts",
+      "key": 16517
+    }
+  ]
+}

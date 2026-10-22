@@ -370,6 +370,10 @@ function renderStart() {
 }
 
 function renderAreas() {
+  if (!MAP.streams.length) {
+    $("#area-list").innerHTML = `<p class="muted">No areas yet: this profile quotes no plan for any part of the code. An area is added by quoting the maintainers' own target for it, with its source.</p>`;
+    return;
+  }
   $("#area-list").innerHTML = MAP.streams.map((s) => {
     const target = s.target.map(quoteBlock).join("");
     const before = s.before.length ? `<div class="stack" style="gap:var(--s2)"><span class="eyebrow">Before you build here</span><ol class="advice">${s.before.map((b) => `<li>${linkNums(b)}</li>`).join("")}</ol></div>` : "";
@@ -569,6 +573,7 @@ function renderMethod() {
     <li>Signature checks follow one level of inheritance and compare types by name.</li>
     <li>An area's open PRs are found by the issues they cite, labels, titles and paths, so the lists are a guide, not a census.</li>
     ${(PF.skip_labels || []).length ? `<li>PRs and issues labelled ${PF.skip_labels.map(esc).join(" or ")} are left out of the areas.</li>` : ""}
+    ${(MAP.other_bases || []).length ? `<li id="other-bases">${plural(MAP.other_bases.length, "open PR is", "open PRs are")} aimed at another branch than ${esc(BASE)}, so ${MAP.other_bases.length === 1 ? "it was" : "they were"} left out: ${MAP.other_bases.map((o) => `<a class="mono" href="${GH}pull/${o.number}" title="${esc(o.title)} · ${esc(o.by)}">#${o.number}</a> onto <code>${esc(o.base)}</code>`).join(", ")}. Each merges onto its own branch; merged onto ${esc(BASE)} it would carry every commit between the two.</li>` : ""}
     <li>A check is only as good as its controls: the known cases this build had to find are listed under <i>Controls this build</i>.</li></ul></div>
     ${rebuildPanel()}`;
 }
@@ -670,6 +675,7 @@ function renderSince() {
     [s.merged, "merged", (x) => gone(x, x.merged_by ? `merged by ${esc(x.merged_by)}` : "merged")],
     [s.closed, "closed without merging", (x) => gone(x, "closed")],
     [s.gone, "no longer open", (x) => gone(x, "")],
+    [s.elsewhere || [], "now aimed at another branch", (x) => gone(x, `onto <code>${esc(x.base)}</code>`)],
     [s.new, "new", (n) => prLine(n)],
     [s.entered, "now nothing blocking", (n) => prLine(n)],
     [s.left, "no longer nothing blocking", (x) => prLine(x.n, ` <span class="muted">· ${esc(x.why.join(", "))}</span>`)],

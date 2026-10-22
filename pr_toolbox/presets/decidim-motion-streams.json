@@ -1,0 +1,13 @@
+{
+  "_about": "Hand-written judgement for Decidim's work-in-motion map: each quote as Decidim's maintainers wrote it, with its source. Areas come later, from the Product Team's boards and the Metadecidim roadmap.",
+  "rules_package": null,
+  "general_heading": "From CONTRIBUTING.adoc and the contributor notes in .ai/",
+  "general": [
+    {"text": "Do not open an issue on GitHub until you have collected positive feedback about the change and Product Team has approved it.", "source": "CONTRIBUTING.adoc, Do you intend to add a new feature or change an existing one?", "url": "https://github.com/decidim/decidim/blob/develop/CONTRIBUTING.adoc"},
+    {"text": "When the PR includes a breaking change or includes something that requires manual intervention when deploying, it is necessary to add it on the changelog upgrade notes.", "source": "CONTRIBUTING.adoc, Did you write a patch that fixes a bug?", "url": "https://github.com/decidim/decidim/blob/develop/CONTRIBUTING.adoc"},
+    {"text": "The locales are managed by Crowdin. When you are developing you must only take care of the en.yml files, do not change the other locales.", "source": ".ai/locales.md", "url": "https://github.com/decidim/decidim/blob/develop/.ai/locales.md"},
+    {"text": "When creating new features that require database changes, migrations belong in the appropriate decidim-* module, not in the development app.", "source": ".ai/development-workflow.md, Database Migrations", "url": "https://github.com/decidim/decidim/blob/develop/.ai/development-workflow.md"},
+    {"text": "When making changes to decidim-generators that affect application configuration (files like config/application.rb, config/environments/*, etc) or other generated files, also document these changes in RELEASE_NOTES.md", "source": ".ai/important-notes.md", "url": "https://github.com/decidim/decidim/blob/develop/.ai/important-notes.md"}
+  ],
+  "streams": []
+}

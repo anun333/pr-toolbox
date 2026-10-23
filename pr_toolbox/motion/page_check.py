@@ -142,13 +142,26 @@ def desktop(pg):
         press(pg, "#lookup-form button", 300)
         line = next((x for x in pg.inner_text("#result").splitlines() if "already uses it" in x), "")
         check("a card says when the base already uses its version number", bool(line), line or taken)
-    stack = next((x for x in (MAP.get("duplicates") or {}).get("stacked", [])
-                  if PRS.get(str(x["in"]), {}).get("claim") is not None and PRS.get(str(x["in"]), {}).get("claim") == PRS.get(str(x["contained"]), {}).get("claim")), None)
-    if stack:
+    # A stack whose two PRs make the same bump: alone on that number it is no collision; with an outside PR
+    # on the number too, it is one, and the card names that PR (OpenEMR 2026-10-23: #14808 beside #14708/#14715).
+    claimants = {}
+    for number, pr in PRS.items():
+        if pr.get("claim") is not None:
+            claimants.setdefault(pr["claim"], set()).add(str(number))
+    stacks = [x for x in (MAP.get("duplicates") or {}).get("stacked", [])
+              if PRS.get(str(x["in"]), {}).get("claim") is not None and PRS.get(str(x["in"]), {}).get("claim") == PRS.get(str(x["contained"]), {}).get("claim")]
+    outside = lambda x: claimants.get(PRS[str(x["in"])]["claim"], set()) - {str(x["in"]), str(x["contained"])}
+    for stack in [next((x for x in stacks if not outside(x)), None), next((x for x in stacks if outside(x)), None)]:
+        if stack is None:
+            continue
         pg.fill("#q", str(stack["contained"]))
         press(pg, "#lookup-form button", 300)
         line = next((x for x in pg.inner_text("#result").splitlines() if "stacked with it" in x), "")
-        check("a stack's shared version bump is not called a collision", bool(line) and "SHARED" not in line.upper(), line or stack)
+        if outside(stack):
+            check("a stack sharing its bump with an outside PR is a collision, naming that PR",
+                  "SHARED" in line.upper() and any(f"#{n}" in line for n in outside(stack)), line or stack)
+        else:
+            check("a stack's shared version bump is not called a collision", bool(line) and "SHARED" not in line.upper(), line or stack)
     # folded areas open when a link points into them
     folds = pg.eval_on_selector_all("#area-list details.fold", "ds => ds.map(d => d.open)")
     if MAP.get("streams"):

@@ -102,6 +102,8 @@ Each step runs one command, in order, after the built-in `merges` step and befor
 | `timeout` | seconds (default 1800) |
 | `tail` | lines of output shown when the step fails (default 15) |
 | `verbose` | for `each`: show each file's last line of output, not just `ok` |
+| `needs` | a path, or list of paths, in the checkout that the command needs, such as `node_modules/.bin/eslint`. If one is missing, the step is skipped and says which, rather than failing as if the code were wrong. |
+| `needs_hint` | what to run to get it, shown with the skip |
 
 Commands and `write` content can use these placeholders:
 - `{files}` and `{file}`, shell-quoted;
@@ -302,7 +304,12 @@ The built-in [`openemr`](pr_toolbox/presets/openemr.json) profile is what the to
 
 - **`version_claims`**: `$v_database` in `version.php`. Every SQL change takes the next number, mirrored in the header of `sql/database.sql`. `#If…`/`#EndIf` blocks in the upgrade scripts must balance.
 - **`exact_caps`**: `.phpstan/fatal-baseline-caps.php`, which pins some PHPStan baseline counts exactly.
-- **`check_steps`**: the checks OpenEMR's CI runs, in the container of a dev stack such as [`openemr-cmd`](https://github.com/openemr/openemr-devops/tree/master/utilities/openemr-cmd) starts:
+- **`check_steps`**: the checks OpenEMR's CI runs. The JavaScript and CSS ones run in the checkout, after `npm ci` there:
+  - `eslint` on the changed JavaScript files, errors only, as `npm run lint:js` does;
+  - `stylelint` on the changed CSS and SCSS files;
+  - `tests-js`: each changed Jest test in `tests/js`.
+
+  The PHP ones run in the container of a dev stack such as [`openemr-cmd`](https://github.com/openemr/openemr-devops/tree/master/utilities/openemr-cmd) starts:
   - `php-lint`: `php -l` on each changed PHP file;
   - `phpcs`, with `phpcs.xml.dist`;
   - `rector`: a dry run;

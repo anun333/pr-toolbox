@@ -84,6 +84,9 @@ class Check:
         files = [f for f in self.changed if (not pattern or matches(f, pattern)) and not matches(f, step.get("exclude"))]
         if not files and not step.get("always"):
             return "skip", f"no changed files match {pattern}"
+        missing = [n for n in ([step["needs"]] if isinstance(step.get("needs"), str) else step.get("needs") or []) if not (self.repo / n).exists()]
+        if missing:
+            return "skip", f"{', '.join(missing)} {'is' if len(missing) == 1 else 'are'}n't in the checkout" + (f": {step['needs_hint']}" if step.get("needs_hint") else "")
         if step.get("write"):
             content = self.fill(step["write"]["content"])
             path = step["write"]["path"]

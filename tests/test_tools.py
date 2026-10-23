@@ -271,6 +271,15 @@ class PrCheckTest(unittest.TestCase):
         self.assertEqual(["merges", "all-at-once", "per-file", "pattern", "nothing-matches", "codespell", "caps", "version", "version-claims", "secrets", "trailers"],
                          [name for name, _ in check.plan()])
 
+    def test_a_step_whose_tool_is_missing_is_skipped_and_says_so(self):
+        repo = self.branch({"a.js": "x;\n", "tools/lint": "#!/bin/sh\nexit 1\n"})
+        (repo / "tools/lint").chmod(0o755)
+        step = {"name": "lint", "files": "*.js", "needs": "node_modules/.bin/eslint", "needs_hint": "run npm ci", "run": "false"}
+        check = self.check_for(repo, config={"check_steps": [step]})
+        self.assertEqual(("skip", "node_modules/.bin/eslint isn't in the checkout: run npm ci"), check.command_step(step))
+        # Control: when the tool is there, the step runs, and fails here.
+        self.assertEqual("fail", check.command_step({**step, "needs": "tools/lint"})[0])
+
     def test_a_container_step_without_a_container_fails(self):
         repo = self.branch({"a.php": "<?php\n"})
         check = self.check_for(repo, config={"check_steps": [{"name": "lint", "where": "container", "each": "*.php", "run": "php -l {file}"}]})

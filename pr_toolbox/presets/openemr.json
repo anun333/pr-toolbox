@@ -44,6 +44,31 @@
   ],
   "check_steps": [
     {
+      "name": "eslint",
+      "files": "*.js",
+      "needs": "node_modules/.bin/eslint",
+      "needs_hint": "run npm ci in the checkout (CI's styling and js-test jobs do)",
+      "run": "node_modules/.bin/eslint --quiet --no-warn-ignored {files}"
+    },
+    {
+      "name": "stylelint",
+      "files": [
+        "*.css",
+        "*.scss"
+      ],
+      "needs": "node_modules/.bin/stylelint",
+      "needs_hint": "run npm ci in the checkout (CI's styling and js-test jobs do)",
+      "run": "node_modules/.bin/stylelint --allow-empty-input {files}"
+    },
+    {
+      "name": "tests-js",
+      "files": "tests/js/*.test.js",
+      "needs": "node_modules/.bin/jest",
+      "needs_hint": "run npm ci in the checkout (CI's styling and js-test jobs do)",
+      "run": "node_modules/.bin/jest {files}",
+      "timeout": 1800
+    },
+    {
       "name": "php-lint",
       "where": "container",
       "each": "*.php",

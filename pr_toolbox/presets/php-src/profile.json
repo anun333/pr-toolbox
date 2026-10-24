@@ -4,6 +4,16 @@
   "version_claims": null,
   "exact_caps": null,
   "health_ignore": "^(codecov/.*)$",
+  "codespell_exclude": ["Zend/asm/*", "ext/date/lib/*", "ext/fileinfo/libmagic/*", "ext/gd/libgd/*", "ext/hash/xxhash/*", "ext/lexbor/lexbor/*",
+                        "ext/opcache/jit/ir/*", "ext/pcre/pcre2lib/*", "ext/standard/libavifinfo/*", "ext/uri/uriparser/*", "ext/fileinfo/data_file.c"],
+  "check_steps": [
+    {"name": "generated headers", "files": "*.stub.php",
+     "run": "python3 -I {profile_dir}/stub_hashes.py {files}"},
+    {"name": "changed tests", "files": "*.phpt", "needs": "sapi/cli/php",
+     "needs_hint": "build this checkout first (./buildconf && ./configure --enable-debug && make -j$(nproc)); the tests run against that binary, so build it from this branch",
+     "run": "TEST_PHP_EXECUTABLE=sapi/cli/php sapi/cli/php run-tests.php -q {files}",
+     "fail_pattern": "Tests (failed|borked)\\s*:\\s*[1-9]", "timeout": 1800}
+  ],
   "motion": {
     "title": "php-src Work in Motion",
     "project": "php-src",
@@ -49,7 +59,7 @@
       "CI counts as run when the head carries the LINUX_X64_RELEASE_NTS job (named Suite / LINUX_X64_RELEASE_NTS since the workflow was reorganised). php-src's test workflow skips PRs that change only documentation, NEWS, UPGRADING and the like, so those read CI not run, as do older PRs whose heads carry no checks at all.",
       "Opcode numbers, ini settings, and the functions, classes and constants a stub declares count as a shared name only when two PRs both add them: a PR that edits an existing one's line adds nothing."
     ],
-    "streams": "php-src-motion-streams.json",
-    "controls": "php-src-motion-controls.json"
+    "streams": "streams.json",
+    "controls": "controls.json"
   }
 }

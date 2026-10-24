@@ -1019,6 +1019,31 @@ class Profiles(unittest.TestCase):
         self.assertEqual(failures, [])
         self.assertTrue(all("no longer open" in n for n in notes))
 
+    def test_php_src_preset_is_a_folder(self) -> None:
+        from pr_toolbox import common
+        self.assertEqual("php-src", common.PRESET_FOR_REPO["php/php-src"])
+        cfg = common.load_config(Path("."), "php/php-src", preset="php-src")
+        p = cli.resolve_profile(common.Target(Path("."), "origin", "php/php-src", "master", cfg), None)
+        self.assertEqual("php-src Work in Motion", p["title"])
+        self.assertEqual(["PHP-8.2", "PHP-8.3", "PHP-8.4", "PHP-8.5", "PHP-8.6"], p["merge_up"])
+        self.assertEqual(12, len(p["streams"]["streams"]), "the areas, read from streams.json beside profile.json")
+        self.assertEqual(7, len(p["controls"]["controls"]), "the controls, read from controls.json beside it")
+        for path in ("NEWS", "ext/standard/basic_functions_arginfo.h", "Zend/zend_vm_execute.h"):
+            self.assertRegex(path, p["mechanical"])
+        self.assertNotRegex("Zend/zend_vm_def.h", p["mechanical"], "the VM's definitions are written by hand")
+        names = {k["kind"]: re.compile(k["pattern"]) for k in p["names"]}
+        self.assertEqual("211", names["opcode number"].search("ZEND_VM_COLD_CONST_HANDLER(211, ZEND_NULLABLE_CAST, CONST|TMP, ANY)").group(1))
+        self.assertTrue(all(k.get("added_only") for k in p["names"]))
+
+    def test_a_profile_folder_anywhere_finds_its_own_files(self) -> None:
+        from pr_toolbox import common
+        mine = Path(tempfile.mkdtemp())
+        (mine / "profile.json").write_text(json.dumps({"motion": {"streams": "streams.json"}}))
+        (mine / "streams.json").write_text(json.dumps({"general": [], "rules_package": None, "streams": [{"id": "x", "title": "X"}]}))
+        cfg = common.load_config(Path("/nonexistent"), "a/b", path=str(mine))
+        p = cli.resolve_profile(common.Target(Path("/nonexistent"), "origin", "a/b", "main", cfg), None)
+        self.assertEqual(["x"], [s["id"] for s in p["streams"]["streams"]])
+
     def test_decidim_preset(self) -> None:
         from pr_toolbox import common
         self.assertEqual(common.PRESET_FOR_REPO["decidim/decidim"], "decidim")

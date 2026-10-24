@@ -85,8 +85,9 @@ def resolve_profile(target: common.Target, args: argparse.Namespace) -> dict:
     motion["title"] = motion["title"] or f"{motion['project']} Work in Motion"
     for key in ("streams", "controls", "conformance"):
         value = motion[key]
-        if isinstance(value, str):  # a file: next to the built-in presets, or relative to the checkout
-            path = PRESETS / value if (PRESETS / value).exists() else target.repo / value
+        if isinstance(value, str):  # a file: beside the profile, next to the built-in presets, or in the checkout
+            near = [Path(target.config["_dir"]) / value] if target.config.get("_dir") else []
+            path = next((p for p in [*near, PRESETS / value] if p.exists()), target.repo / value)
             value = json.loads(path.read_text())
         motion[key] = value
     if motion["streams"] is None:

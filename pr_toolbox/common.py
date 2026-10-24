@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 PRESETS = Path(__file__).resolve().parent / "presets"
-PRESET_FOR_REPO = {"openemr/openemr": "openemr", "decidim/decidim": "decidim"}
+PRESET_FOR_REPO = {"openemr/openemr": "openemr", "decidim/decidim": "decidim", "php/php-src": "php-src"}
 CONFIG_NAME = ".pr-toolbox.json"
 OLD_CONFIG_NAMES = [".pr-tools.json"]
 
@@ -118,14 +118,31 @@ def load_config(repo: Path, github: str, path: str | None = None, preset: str | 
     built-in profile for the repository, else nothing: plain test merges, health, and the generic
     checks."""
     if path:
-        return json.loads(Path(path).expanduser().read_text())
+        return read_profile(Path(path))
     if preset:
-        return json.loads((PRESETS / f"{preset}.json").read_text())
+        return read_profile(preset_file(preset))
     for local in (repo / n for n in [CONFIG_NAME, *OLD_CONFIG_NAMES]):
         if local.exists():
-            return json.loads(local.read_text())
+            return read_profile(local)
     name = PRESET_FOR_REPO.get(github.lower())
-    return json.loads((PRESETS / f"{name}.json").read_text()) if name else {}
+    return read_profile(preset_file(name)) if name else {}
+
+
+def preset_file(name: str) -> Path:
+    """A built-in profile: presets/<name>/profile.json when it has a folder of its own, else presets/<name>.json."""
+    folder = PRESETS / name / "profile.json"
+    return folder if folder.exists() else PRESETS / f"{name}.json"
+
+
+def read_profile(path: Path) -> dict:
+    """A profile file, or a folder holding profile.json, with the folder it came from as "_dir": the files the profile
+    names (motion's areas and controls, a check step's script) are looked for there first."""
+    path = path.expanduser()
+    if path.is_dir():
+        path = path / "profile.json"
+    config = json.loads(path.read_text())
+    config["_dir"] = str(path.resolve().parent)
+    return config
 
 
 def matches(path: str, patterns: list[str] | str | None) -> bool:

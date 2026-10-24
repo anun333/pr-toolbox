@@ -82,7 +82,7 @@ A problem a reader notices in one PR on its own is not an interaction. Keep it o
 
 ## A project profile
 
-Add a `motion` section to `.pr-toolbox.json`. Every key has a neutral default, and the OpenEMR preset (`pr_toolbox/presets/openemr.json`) sets them all. The keys:
+Add a `motion` section to `.pr-toolbox.json`, or keep the profile as a folder (`profile.json` beside its areas, controls and step scripts, as `pr_toolbox/presets/php-src/` is). Every key has a neutral default, and the OpenEMR preset (`pr_toolbox/presets/openemr.json`) sets them all. The keys:
 - **`title`, `project`:** the page's name and the project's.
 - **`mechanical`:** a regex for files every schema or lint change touches. It defaults to what `version_claims` and `exact_caps` name.
 - **`release_tags`:** a pattern and a count.

@@ -33,7 +33,7 @@ openemr-pr-tools = "pr_toolbox.__main__:main"
 packages = ["pr_toolbox", "pr_toolbox.motion", "openemr_pr_tools"]
 
 [tool.setuptools.package-data]
-pr_toolbox = ["presets/*.json", "motion/*.php", "motion/*.html", "motion/*.md"]
+pr_toolbox = ["presets/*.json", "presets/*/*.json", "presets/*/*.py", "motion/*.php", "motion/*.html", "motion/*.md"]
 
 [tool.setuptools.dynamic]
 version = { attr = "pr_toolbox.__version__" }

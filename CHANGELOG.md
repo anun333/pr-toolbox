@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **A profile can be a folder of its own.** `profile.json` beside the files it names (motion's areas and controls) and the scripts its check steps run, through the new `{profile_dir}` placeholder. `--config` takes such a folder, and a built-in preset may be one: php-src's is now `presets/php-src/`, and it is picked automatically for `php/php-src`. Flat presets (OpenEMR, Decidim) are unchanged.
+- **`check` for php-src.** Each changed stub's generated `*_arginfo.h` and `*_decl.h` must carry the stub's current hash, as php-src's CI checks by regenerating them; read only, and on all 138 stubs on master it agrees. Changed `.phpt` tests run with the checkout's own `sapi/cli/php`, and the step is skipped with a build hint when there is none.
+
 - **`motion`: Queues.** The open PRs counted by area, by branch and by owner, in the states triage filters by; each count lists its PRs in triage, which names the scope and clears it. Owners are read from CODEOWNERS on each PR's own target branch, the last matching rule deciding each file as GitHub does (on php-src, 18 owners across 1,025 PRs).
 - **`motion`: labels the build disagrees with (`status_labels`).** On php-src, all 15 PRs labelled "Waiting on Review" are 3 to 7 years old, none has CI on its head, and 12 need a rebase.
 - **`motion`: one fix opened twice.** Open PRs with the same title that change a file in common outside the mechanical ones are named under "Same work twice" and joined in a group (php-src: a PCRE2 upgrade on PHP-8.6 and master, its backport on 8.3, 8.4 and 8.5).

@@ -54,10 +54,12 @@ The older names still work as fallbacks: `PR_TOOLS_*` from 0.2, and `OPENEMR_REP
 ## Project profiles
 
 A profile tells the tools a project's own rules and CI commands. They look for one in this order:
-1. `--config FILE`;
+1. `--config PATH`: a profile file, or a folder holding `profile.json`;
 2. `--preset NAME`, a built-in profile;
 3. `.pr-toolbox.json` at the top of the checkout (or `.pr-tools.json`, its name in 0.2);
-4. the built-in profile for the GitHub repository, if there is one (only `openemr/openemr` so far).
+4. the built-in profile for the GitHub repository, if there is one (`openemr/openemr`, `decidim/decidim` and `php/php-src`).
+
+A profile can be one file, or a folder of its own: `profile.json` beside the files it names, such as motion's areas and controls, and any scripts its check steps run (`{profile_dir}`). The built-in php-src profile is the folder [`presets/php-src/`](pr_toolbox/presets/php-src/).
 
 Without a profile you still get:
 - test merges;
@@ -107,6 +109,7 @@ Each step runs one command, in order, after the built-in `merges` step and befor
 
 Commands and `write` content can use these placeholders:
 - `{files}` and `{file}`, shell-quoted;
+- `{profile_dir}`, shell-quoted: the folder the profile was read from, for a script the profile keeps beside it;
 - `{app_dir}`;
 - `{workers}`, from `--workers`, for tools that would otherwise start a process per core;
 - `{base}`, the base branch as `remote/branch`.
@@ -302,7 +305,7 @@ ln -s "$PWD/skills/pr-toolbox-motion" ~/.claude/skills/pr-toolbox-motion
 
 ## The php-src profile
 
-`--preset php-src` (`php/php-src`, base `master`). Fixes go to the lowest supported `PHP-8.x` branch and are merged up, so `merge_up` lists PHP-8.2 to 8.6; most PRs land by a pushed commit (`landings`). Its areas quote CONTRIBUTING.md, php/policies and RFCs on wiki.php.net; its shared names are a stub's functions, classes and constants, ini settings and opcode numbers, each counted only when a PR adds it (`added_only`). NEWS, UPGRADING and the generated files (`*_arginfo.h`, the VM's) are mechanical; a NEWS-only conflict still pairs on the base, conflicts found head to head are kept apart, and pairs sharing only mechanical files aren't merged. Its controls are seven real cases, each reproduced by hand.
+`presets/php-src/`, picked automatically for `php/php-src` (base `master`). Its `check` steps confirm each changed stub's generated `*_arginfo.h` and `*_decl.h` carry the stub's current hash, as php-src's CI checks by regenerating them (read only; the step names the `build/gen_stub.php` command), and run the changed `.phpt` tests with the checkout's own `sapi/cli/php`, skipped with a hint when it isn't built. Fixes go to the lowest supported `PHP-8.x` branch and are merged up, so `merge_up` lists PHP-8.2 to 8.6; most PRs land by a pushed commit (`landings`). Its areas quote CONTRIBUTING.md, php/policies and RFCs on wiki.php.net; its shared names are a stub's functions, classes and constants, ini settings and opcode numbers, each counted only when a PR adds it (`added_only`). NEWS, UPGRADING and the generated files (`*_arginfo.h`, the VM's) are mechanical; a NEWS-only conflict still pairs on the base, conflicts found head to head are kept apart, and pairs sharing only mechanical files aren't merged. Its controls are seven real cases, each reproduced by hand.
 
 ## The OpenEMR profile
 

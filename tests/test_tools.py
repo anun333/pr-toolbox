@@ -65,6 +65,17 @@ class CommonTest(unittest.TestCase):
         (repo / ".pr-tools.json").write_text('{"name": "older"}')
         self.assertEqual("older", common.load_config(repo, "openemr/openemr").get("name"))
 
+    def test_a_profile_in_a_folder_of_its_own(self):
+        repo = repo_with({"README": "x"})
+        php = common.load_config(repo, "php/php-src")
+        self.assertEqual(("php-src", str(common.PRESETS / "php-src")), (php.get("name"), php.get("_dir")), "picked for php/php-src, from presets/php-src/")
+        self.assertEqual(str(common.PRESETS), common.load_config(repo, "openemr/openemr")["_dir"], "a flat preset's folder is presets/")
+        mine = Path(tempfile.mkdtemp()) / "profile"
+        mine.mkdir()
+        (mine / "profile.json").write_text('{"name": "mine"}')
+        self.assertEqual(("mine", str(mine.resolve())), tuple(common.load_config(repo, "x/y", path=str(mine)).get(k) for k in ("name", "_dir")),
+                         "--config takes a folder holding profile.json")
+
     def test_the_old_package_name_gives_the_same_modules(self):
         import openemr_pr_tools
         from openemr_pr_tools import common as old_common, landing_order as old_landing
@@ -270,6 +281,24 @@ class PrCheckTest(unittest.TestCase):
         self.assertEqual("pass", results["merges"][0])
         self.assertEqual(["merges", "all-at-once", "per-file", "pattern", "nothing-matches", "codespell", "caps", "version", "version-claims", "secrets", "trailers"],
                          [name for name, _ in check.plan()])
+
+    def test_php_src_steps_check_stub_hashes_and_skip_tests_without_a_build(self):
+        import hashlib
+        php = common.load_config(Path("."), "php/php-src", preset="php-src")
+        stub = "<?php\nfunction f(): void {}\n"
+        header = f"/* This is a generated file, edit x.stub.php instead.\n * Stub hash: {hashlib.sha1(stub.encode()).hexdigest()} */\n"
+        repo = self.branch({"ext/x/x.stub.php": stub, "ext/x/x_arginfo.h": header, "ext/x/tests/a.phpt": "--TEST--\n"}, base_files={"README": "x"})
+        check = self.check_for(repo, config=php)
+        steps = {s["name"]: s for s in php["check_steps"]}
+        self.assertEqual(("pass", "1 files"), check.command_step(steps["generated headers"]))
+        status, detail = check.command_step(steps["changed tests"])
+        self.assertEqual("skip", status)
+        self.assertIn("sapi/cli/php isn't in the checkout: build this checkout first", detail)
+        # Control: the stub changes and its header doesn't
+        commit(repo, {"ext/x/x.stub.php": stub + "function g(): void {}\n"}, "stub only")
+        status, detail = self.check_for(repo, config=php).command_step(steps["generated headers"])
+        self.assertEqual("fail", status)
+        self.assertIn("run build/gen_stub.php ext/x/x.stub.php", detail)
 
     def test_a_step_whose_tool_is_missing_is_skipped_and_says_so(self):
         repo = self.branch({"a.js": "x;\n", "tools/lint": "#!/bin/sh\nexit 1\n"})

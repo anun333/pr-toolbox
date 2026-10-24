@@ -719,6 +719,113 @@ class StaleConflicts(unittest.TestCase):
         self.assertEqual((["after a rebase"], 0, True), out["apart"], "shown on the card, but #51 must rebase before it matters")
 
 
+class Lenses(unittest.TestCase):
+    """Owners from CODEOWNERS on each PR's own branch, one fix opened twice, status labels the build disagrees with,
+    the data files, and pairs that share only mechanical files left unmerged when the profile says so."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.tmp = tmp = Path(tempfile.mkdtemp())
+        repo = cls.repo = tmp / "repo"
+        repo.mkdir()
+        git(repo, "init", "-q", "-b", "master")
+        git(repo, "config", "user.email", "t@example.org")
+        git(repo, "config", "user.name", "t")
+        commit(repo, {".github/CODEOWNERS": "*.stub.php @stubs\n/ext/dom @branch-owner\n", "NEWS": "- one\n",
+                      "ext/dom/dom.c": "1\n2\n3\n", "ext/dom/dom.stub.php": "<?php\n", "z.c": "z\n"}, "base")
+        git(repo, "checkout", "-q", "-b", "R-1")
+        commit(repo, {"y.c": "on the branch\n"}, "branch work")
+        git(repo, "checkout", "-q", "master")
+        git(repo, "merge", "-q", "--no-ff", "-m", "merge up", "R-1")
+        # master's owners differ from the branch's, and its last rule for ext/dom wins over the earlier one
+        commit(repo, {".github/CODEOWNERS": "*.stub.php @stubs\n/ext/dom @old-owner\n/ext/dom/ @master-owner\n"}, "owners change on master")
+        for ref in ("master", "R-1"):
+            git(repo, "update-ref", f"refs/remotes/origin/{ref}", git(repo, "rev-parse", ref))
+        pr(repo, 61, "master", {"ext/dom/dom.c": "1 fixed\n2\n3\n", "NEWS": "- one\n- 61\n"})
+        pr(repo, 62, "R-1", {"ext/dom/dom.c": "1 fixed\n2\n3\n", "NEWS": "- one\n- 62\n"})     # the same fix on the branch
+        pr(repo, 63, "master", {"ext/dom/dom.stub.php": "<?php\nfunction f() {}\n", "NEWS": "- one\n- 63\n"})
+        pr(repo, 64, "master", {"z.c": "z, 64\n", "lib/x.stub.php": "<?php\n"})
+        cls.numbers, cls.bases = [61, 62, 63, 64], {61: "master", 62: "R-1", 63: "master", 64: "master"}
+        cls.labels = {63: ["Waiting on Review"], 64: ["Waiting on Author"]}
+        cls.prlist = tmp / "open-prs.txt"
+        cls.prlist.write_text("".join(f"{n} {cls.bases[n]}\n" for n in cls.numbers))
+        cls.profile = {**PROFILE, "version_claims": None, "mechanical": "^NEWS$", "names": [], "name_paths": [], "merge_up": ["R-1"],
+                       "status_labels": {"Waiting on Review": "review", "Waiting on Author": "author"}}
+        cls.map = cls.run_all("all", ci={63: "FAILURE"})
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    @classmethod
+    def run_all(cls, pair_files, ci=None):
+        tmp, repo = cls.tmp, cls.repo
+        profile = tmp / f"profile-{pair_files}.json"
+        profile.write_text(json.dumps({**cls.profile, "pair_files": pair_files}))
+        env = {**os.environ, "WIM_PROFILE": str(profile), "WIM_OFFLINE": "1"}
+        work, g = tmp / f"audit-{pair_files}", tmp / f"inputs-{pair_files}"
+        r = subprocess.run([sys.executable, "-I", str(MOTION / "repo_audit.py"), str(repo), str(work), str(cls.prlist)], capture_output=True, text=True, env=env)
+        assert r.returncode == 0, r.stderr[-1500:]
+        (g / "issues").mkdir(parents=True)
+        heads = {n: git(repo, "rev-parse", f"refs/pr/{n}") for n in cls.numbers}
+        (g / "pr-meta.json").write_text(json.dumps([{"number": n, "title": "Fix the DOM bug" if n in (61, 62) else f"PR {n}", "isDraft": False,
+                                                     "createdAt": f"2026-0{n - 60}-01T00:00:00Z", "updatedAt": "2026-10-02T00:00:00Z",
+                                                     "author": {"login": f"a{n}"}, "labels": [{"name": l} for l in cls.labels.get(n, [])],
+                                                     "baseRefName": cls.bases[n]} for n in cls.numbers]))
+        (g / "pr-bodies.json").write_text(json.dumps([{"number": n, "body": "", "reviewDecision": None} for n in cls.numbers]))
+        (g / "pr-extra.json").write_text(json.dumps({n: {"head": heads[n], "additions": 1, "deletions": 0, "files": 1, "author_role": "CONTRIBUTOR",
+                                                         "comments": 0, "closing": [], "reviews": [], "ci": (ci or {}).get(n, "SUCCESS")} for n in cls.numbers}))
+        (g / "mergers.json").write_text("{}")
+        cls.page = tmp / f"page-{pair_files}.html"
+        r = subprocess.run([sys.executable, "-I", str(MOTION / "intent.py"), str(repo), str(work), str(g), str(MOTION / "page.html"), str(cls.page)],
+                           capture_output=True, text=True, env=env)
+        assert r.returncode == 0, r.stderr[-1500:]
+        return json.loads((work / "map.json").read_text())
+
+    def test_owners_from_each_prs_own_branch(self) -> None:
+        prs = self.map["prs"]
+        self.assertEqual(["@master-owner"], prs["61"]["owners"], "master's last rule for ext/dom wins")
+        self.assertEqual(["@branch-owner"], prs["62"]["owners"], "the branch's CODEOWNERS, not master's")
+        self.assertEqual(["@master-owner"], prs["63"]["owners"], "the later /ext/dom/ rule overrides *.stub.php for a stub there")
+        self.assertEqual(["@stubs"], prs["64"]["owners"], "a pattern with no slash matches at any depth")
+
+    def test_one_fix_opened_twice(self) -> None:
+        twins = self.map["duplicates"]["same_title"]
+        self.assertEqual([{"title": "Fix the DOM bug", "prs": [61, 62], "bases": ["master", "R-1"], "files": ["ext/dom/dom.c"]}], twins,
+                         "NEWS, mechanical, doesn't make two PRs the same work")
+        link = next(l for g in self.map["groups"] for l in g["links"] if (l["a"], l["b"]) == (61, 62))
+        self.assertIn("same title", link["kinds"], "the two join a group: which one lands is a decision")
+
+    def test_labels_the_build_disagrees_with(self) -> None:
+        gaps = {g["n"]: g for g in self.map["labels_vs_build"]["gaps"]}
+        self.assertEqual(["CI failing"], gaps[63]["but"], "labelled ready for review, with CI failing")
+        self.assertEqual("waiting on its author", gaps[64]["says"], "labelled waiting on its author, with nothing blocking it")
+
+    def test_the_data_files(self) -> None:
+        ex = self.map["exports"]
+        prs = json.loads((self.page.parent / ex["prs_json"]).read_text())
+        self.assertEqual(("pr-toolbox motion prs 1", 4), (prs["schema"], len(prs["prs"])))
+        row = {r["number"]: r for r in prs["prs"]}[63]
+        self.assertEqual((False, ["CI failing"], ["@master-owner"]), (row["nothing_blocking"], row["blockers"], row["owners"]))
+        self.assertEqual(["NEWS", "ext/dom/dom.stub.php"], row["changed_files"])
+        import csv as csv_
+        rows = list(csv_.DictReader((self.page.parent / ex["prs_csv"]).read_text().splitlines()))
+        self.assertEqual(["61", "62", "63", "64"], [r["number"] for r in rows])
+        self.assertEqual("@stubs", rows[3]["owners"])
+        self.assertNotIn("changed_files", rows[0], "file lists stay in the JSON")
+        groups = json.loads((self.page.parent / ex["groups_json"]).read_text())["groups"]
+        self.assertEqual(self.map["groups"], groups)
+
+    def test_pairs_sharing_only_mechanical_files(self) -> None:
+        pairs = lambda mode: {k for k in json.loads((self.tmp / f"audit-{mode}" / "pairs.json").read_text())["pairs"]}
+        self.run_all("code")
+        both = {tuple(int(x.split(":")[0]) for x in k.split(",")) for k in pairs("all")}
+        code = {tuple(int(x.split(":")[0]) for x in k.split(",")) for k in pairs("code")}
+        self.assertIn((61, 63), both, "61 and 63 share only NEWS")
+        self.assertNotIn((61, 63), code)
+        self.assertIn((61, 62), code, "a pair sharing a code file is still merged")
+
+
 class MergeUpFixture(unittest.TestCase):
     """A release branch merged up into master after every change, as php-src's PHP-8.x are: its PRs take their diff from
     their own branch, need a rebase only when they conflict with it, and carry a merge-up conflict when master differs."""
@@ -844,7 +951,8 @@ class CheckPage(unittest.TestCase):
             self.assertEqual(0, cli.main(["check-page", str(self.page)]))
         cmd = run.call_args.args[0]
         self.assertEqual(["docker", "run", "--rm"], cmd[:3])
-        self.assertIn(f"{self.page.resolve()}:/page/index.html:ro", cmd)
+        self.assertIn(f"{self.page.resolve().parent}:/page:ro", cmd, "the page's directory, read only: its data files sit beside it")
+        self.assertIn(f"/page/{self.page.name}", cmd[-1])
         self.assertIn(cli.PLAYWRIGHT_IMAGE, cmd)
 
 

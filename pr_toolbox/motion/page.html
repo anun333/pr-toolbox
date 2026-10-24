@@ -173,6 +173,10 @@ pre.cmd { font: 0.78rem/1.5 var(--f-mono); background: var(--paper); border: 1px
 table.triage { min-width: 980px; }
 table.triage th button { all: unset; cursor: pointer; }
 table.triage th button:focus-visible { outline: 2px solid var(--accent); }
+table.queue { min-width: 680px; }
+table.queue td.n button { all: unset; cursor: pointer; color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+table.queue td.n button:focus-visible { outline: 2px solid var(--accent); }
+table.queue td.zero { color: var(--muted); }
 table.triage th .sort { margin-left: 4px; opacity: .35; }
 table.triage th .sort.on { opacity: 1; color: var(--accent); }
 table.triage th button:hover .sort { opacity: .8; }
@@ -211,7 +215,7 @@ table.triage td.t .by { color: var(--muted); font-size: 0.82rem; }
   </header>
 
   <nav class="toc" aria-label="Sections">
-    <a href="#lookup">Look up</a><a href="#path">Path forward</a><a href="#triage">Triage</a><a href="#start">Before you start</a><a href="#areas">Areas</a><a href="#conformance" id="toc-conformance">Conformance</a><a href="#twice">Same work twice</a><a href="#merge">Merge view</a><a href="#releases">Releases</a><a href="#method">Method and limits</a>
+    <a href="#lookup">Look up</a><a href="#path">Path forward</a><a href="#triage">Triage</a><a href="#queues">Queues</a><a href="#start">Before you start</a><a href="#areas">Areas</a><a href="#conformance" id="toc-conformance">Conformance</a><a href="#twice">Same work twice</a><a href="#merge">Merge view</a><a href="#releases">Releases</a><a href="#method">Method and limits</a>
   </nav>
 
   <section class="glance" id="glance" aria-label="At a glance">
@@ -250,6 +254,12 @@ table.triage td.t .by { color: var(--muted); font-size: 0.82rem; }
       <div class="scroll"><table class="triage" id="ttable"></table></div>
       <div class="row" id="tmore"></div>
     </div>
+  </section>
+
+  <section class="band" id="queues">
+    <div class="band-head"><span class="eyebrow">Queues</span><h2>Where the open PRs wait, and on whom</h2>
+      <p class="muted">The same open PRs as the triage list, counted by area, by branch and by the owners GitHub asks to review them. Select a count to list those PRs in triage. "Unreviewed" means no maintainer has reviewed it yet. A PR can be in more than one row and more than one column.</p></div>
+    <div class="stack" id="queues-body"></div>
   </section>
 
   <section class="band" id="start">
@@ -406,8 +416,9 @@ function renderTwice() {
   const d = MAP.duplicates;
   const same = d.same_issue.map((x) => `<li class="stack" style="gap:4px"><span>${isLink(x.issue)} ${esc(x.title)}${x.conflict ? ' <span class="pill conflict">they conflict</span>' : ""}</span><ul class="plain">${x.prs.map((n) => prLine(n)).join("")}</ul></li>`).join("");
   const names = d.shared_names.map((x) => `<li><span class="pill info">${esc(x.kind)}</span> <code>${esc(x.name)}</code> · ${x.prs.map(prLink).join(", ")}</li>`).join("");
+  const twins = (d.same_title || []).map((x) => `<li>${prLink(x.prs[0])} on <code>${esc(x.bases[0] || BASE)}</code> and ${prLink(x.prs[1])} on <code>${esc(x.bases[1] || BASE)}</code>: ${esc(x.title)} <span class="muted mono" style="font-size:.78rem">${esc(x.files.join(", "))}</span></li>`).join("");
   const stacked = d.stacked.map((x) => `<li>${prLink(x.in)} ${x.how === "built on it" ? "is built on" : "carries the files of"} ${prLink(x.contained)}: merging ${prLink(x.in)} merges both.</li>`).join("");
-  $("#twice-body").innerHTML = `<div class="panel"><h3>One issue, several fixes</h3><p class="muted">Open PRs whose description says it fixes, closes or resolves the same issue.</p><ul class="plain" style="gap:var(--s4)">${same || "<li>None.</li>"}</ul></div>
+  $("#twice-body").innerHTML = `<div class="panel"><h3>One issue, several fixes</h3><p class="muted">Open PRs whose description says it fixes, closes or resolves the same issue.</p><ul class="plain" style="gap:var(--s4)">${same || "<li>None.</li>"}</ul><h3 id="twins">One fix, two PRs</h3><p class="muted">Open PRs with the same title that change a file in common, outside the mechanical ones.</p><ul class="plain">${twins || "<li>None.</li>"}</ul></div>
     <div class="stack"><div class="panel"><h3>The same name added twice</h3><p class="muted">Routes, tables, upgrade columns, list ids, settings, menu ids and event names added by more than one open PR.</p><ul class="plain">${names || "<li>None.</li>"}</ul></div>
     <div class="panel"><h3>One PR on top of another</h3><ul class="plain">${stacked || "<li>None.</li>"}</ul></div></div>`;
 }
@@ -417,9 +428,9 @@ function renderMerge() {
   $("#merge-stats").innerHTML = [
     [m.needs_rebase, `of ${tested} PRs tested no longer merge onto ${UP ? "their own branch" : BASE}${tested < MAP.stamp.open_prs ? ` (the ${MAP.stamp.open_prs - tested} over ${MASS} files are listed apart)` : ""}`, "conflict"],
     [m.needs_rebase_mechanical_only, "of those conflict only in mechanical files", "mech"],
-    [m.conflict_pairs_code, `pairs conflict in code, of ${m.pairs_sharing_a_file.toLocaleString()} that share a file`, "conflict"],
+    [m.conflict_pairs_code, `pairs conflict in code, of ${m.pairs_sharing_a_file.toLocaleString()} that share a file${PF.pair_files === "code" ? " outside the mechanical ones" : ""}`, "conflict"],
     ...(m.conflict_pairs_after_rebase != null ? [[m.conflict_pairs_after_rebase, `pairs conflict in code only merged head to head, where one of the two doesn't merge onto ${BASE} as it stands`, "mech"]] : []),
-    [m.conflict_pairs_mechanical, "pairs conflict only in mechanical files", "mech"],
+    [m.conflict_pairs_mechanical, PF.pair_files === "code" ? "pairs conflict only in mechanical files, among those sharing a file outside them (pairs sharing only mechanical files were not merged)" : "pairs conflict only in mechanical files", "mech"],
   ].map(([n, label, k]) => `<div class="stat"><span class="big" style="color:var(--${k})">${n}</span><span class="muted">${esc(label)}</span></div>`).join("");
   const impact = m.impact.map((x) => `<li class="prline"><span class="num">${prLink(x.n)}</span><span>${esc(pr(x.n)?.t || "")}${draft(x.n)}<div class="muted" style="font-size:.85rem">${x.code_conflicts.length} code conflicts: ${x.code_conflicts.map(prLink).join(" ")}</div></span></li>`).join("");
   const mech = `<table><thead><tr><th>File</th><th class="n">Open PRs</th></tr></thead><tbody>${m.mechanical_files.map(([f, n]) => `<tr><td><code>${esc(f)}</code></td><td class="n">${n}</td></tr>`).join("")}</tbody></table>`;
@@ -568,6 +579,7 @@ function renderMethod() {
     <li>Built by <a href="https://github.com/anun333/pr-toolbox">pr-toolbox</a> <code>motion</code>${PF.tool_version ? ` ${esc(PF.tool_version)}` : ""} with the project's profile; <a href="#rebuild">rebuild it yourself</a> from the same commits or from today's.</li>
     <li>Every build first checks known cases: each must be found, or the build stops rather than publish a silent zero.</li>
     <li>"Read for clashes" is judgement. Candidate pairs are chosen by script and weighted by how few PRs share the concept; readers take each pair from both diffs, with each PR's mention of its partner withheld, and must cite lines from both sides and a concrete case of what breaks. A second reading tries to refute each clash.</li>
+    ${PF.pair_files === "code" ? `<li>Pairs that share only mechanical files were not merged: they can only need a rebase, never a decision. Every other pair that shares a file was.</li>` : ""}
     ${(PF.method_notes || []).map((t) => `<li>${linkNums(t)}</li>`).join("")}
     <li>Nothing from any PR was run.</li></ul>
     <h3 style="margin-top:var(--s3)">Controls this build</h3><p class="muted">Known cases each check had to find, or must not flag, before this page was written.</p>
@@ -889,9 +901,62 @@ const SORTS = {
   size: [(p) => (p.add || 0) + (p.del || 0), "desc", ["smallest first", "largest first"]],
   tests: [(p) => p.tests, "desc", ["fewest test files first", "most test files first"]],
 };
-const tstate = { on: new Set(), sort: "updated", dir: "desc", q: "", all: false };
+const tstate = { on: new Set(), sort: "updated", dir: "desc", q: "", all: false, scope: null };
+/* the queue states: a count in the Queues section lists its PRs in triage through tstate.scope */
+const QSTATES = [
+  ["open", "Open", () => true],
+  ["ready", "Nothing blocking", (p) => p.shortlist],
+  ["unreviewed", "Nothing blocking, unreviewed", (p) => p.shortlist && !p.maint],
+  ["author", "Changes requested", (p) => p.maint === "CHANGES_REQUESTED"],
+  ["rebase", "Needs a rebase", (p) => p.rebase],
+  ["ci", "CI failing", (p) => p.ci === "FAILURE"],
+  ["draft", "Draft", (p) => p.draft],
+];
+const SCOPE_OF = { area: (p, v) => (v ? p.streams.includes(v) : !p.streams.length), base: (p, v) => (p.base || BASE) === v, owner: (p, v) => (p.owners || []).includes(v) };
+const inScope = (p) => !tstate.scope || (SCOPE_OF[tstate.scope.kind](p, tstate.scope.value) && QSTATES.find((q) => q[0] === tstate.scope.state)[2](p));
 const TRIAGE_ROWS = 25;
 const setSort = (key, dir) => { tstate.sort = SORTS[key] ? key : "updated"; tstate.dir = dir || SORTS[tstate.sort][1]; };
+
+function queueTable(title, note, kind, rows, open) {
+  /* rows: [value, label as HTML, label as text, PRs] */
+  const head = `<thead><tr><th>${esc(title)}</th>${QSTATES.map(([, l]) => `<th class="n">${esc(l)}</th>`).join("")}</tr></thead>`;
+  const row = ([v, html, text, ps]) => `<tr><td>${html}</td>${QSTATES.map(([k, l, f]) => { const c = ps.filter(f).length;
+    return `<td class="n${c ? "" : " zero"}">${c ? `<button type="button" data-qk="${kind}" data-qv="${esc(v)}" data-qs="${k}" data-ql="${esc(`${text} · ${l}`)}">${c}</button>` : "0"}</td>`; }).join("")}</tr>`;
+  const table = (rs) => `<div class="scroll"><table class="queue">${head}<tbody>${rs.map(row).join("")}</tbody></table></div>`;
+  const shown = open ? rows : rows.slice(0, 20), rest = open ? [] : rows.slice(20);
+  return `<div class="panel" data-queue="${kind}"><h3>${esc(title)}</h3>${note ? `<p class="muted">${note}</p>` : ""}${table(shown)}${rest.length ? `<details><summary>All ${rows.length}</summary>${table(rest)}</details>` : ""}</div>`;
+}
+
+function renderQueues() {
+  const all = Object.values(MAP.prs), parts = [];
+  const areas = MAP.streams.map((s) => [s.id, `<a href="#area-${esc(s.id)}">${esc(s.title)}</a>`, s.title, all.filter((p) => p.streams.includes(s.id))]);
+  const none = all.filter((p) => !p.streams.length);
+  if (areas.length) parts.push(queueTable("By area", "An area's PRs are found by the issues they cite, labels, titles and paths, as in Areas.", "area", [...areas, ...(none.length ? [["", "<i>In no area</i>", "In no area", none]] : [])], true));
+  if (UP) {
+    const bases = [BASE, ...[...PF.merge_up].reverse()];
+    parts.push(queueTable("By branch", `Bug fixes go to the lowest supported branch and are merged up; ${esc(BASE)} takes the rest. A PR needs a rebase when it conflicts with its own branch.`, "base", bases.map((b) => [b, `<code>${esc(b)}</code>`, b, all.filter((p) => (p.base || BASE) === b)]), true));
+  }
+  const owners = [...new Set(all.flatMap((p) => p.owners || []))];
+  if (owners.length) {
+    const unrev = QSTATES[2][2];
+    const rows = owners.map((o) => [o, `<span class="mono">${esc(o)}</span>`, o, all.filter((p) => (p.owners || []).includes(o))])
+      .sort((a, b) => b[3].filter(unrev).length - a[3].filter(unrev).length || b[3].length - a[3].length || (a[0] < b[0] ? -1 : 1));
+    parts.push(queueTable("By owner", `Read from CODEOWNERS on each PR's own target branch: for each file the last matching rule decides, as GitHub does when it asks for reviews. Owners with the most PRs nothing blocks and no maintainer has reviewed come first.`, "owner", rows, false));
+  }
+  const gaps = MAP.labels_vs_build?.gaps || [];
+  if (Object.keys(MAP.labels_vs_build?.labels || {}).length) {
+    parts.push(`<div class="panel" id="label-gaps"><h3>Labels the build disagrees with</h3><p class="muted">Status labels say what a PR waits on: ${Object.entries(MAP.labels_vs_build.labels).map(([l, w]) => `<b>${esc(l)}</b> (${w === "review" ? "its reviewers" : "its author"})`).join(", ")}. Listed here when this build finds otherwise, oldest first.</p>
+      <ul class="plain">${gaps.map((g) => `<li class="prline"><span class="num">${prLink(g.n)}</span><span>${esc(pr(g.n)?.t || "")}<div class="muted" style="font-size:.85rem">labelled ${esc(g.label)}, so ${esc(g.says)}, but: ${g.but.map(esc).join(", ")}</div></span></li>`).join("") || "<li>None.</li>"}</ul></div>`);
+  }
+  if (MAP.exports) parts.push(`<div class="panel" id="data"><h3>The data</h3><p>One row per open PR, with each state above, its blockers, conflicts, group, areas and owners: <a href="${esc(MAP.exports.prs_csv)}" download>CSV</a> · <a href="${esc(MAP.exports.prs_json)}" download>JSON</a>. The groups: <a href="${esc(MAP.exports.groups_json)}" download>JSON</a>.</p><p class="muted">From the same build as this page, ${esc(BASE)} ${esc(MAP.stamp.master)}, ${esc(MAP.stamp.generated)}.</p></div>`);
+  $("#queues-body").innerHTML = parts.join("");
+  $("#queues-body").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-qk]"); if (!b) return;
+    tstate.scope = { kind: b.dataset.qk, value: b.dataset.qv, state: b.dataset.qs, label: b.dataset.ql };
+    tstate.on = new Set(); tstate.q = ""; $("#tq").value = ""; tstate.all = false; drawTriage();
+    $("#triage").scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+}
 
 function renderTriage() {
   $("#presets").innerHTML = PRESETS.map(([label], i) => `<button type="button" data-preset="${i}">${esc(label)}</button>`).join("");
@@ -899,13 +964,14 @@ function renderTriage() {
   $("#presets").addEventListener("click", (e) => {
     const b = e.target.closest("[data-preset]"); if (!b) return;
     const [, ids, sort] = PRESETS[+b.dataset.preset];
-    tstate.on = new Set(ids); tstate.all = false; setSort(sort); drawTriage();
+    tstate.on = new Set(ids); tstate.all = false; tstate.scope = null; setSort(sort); drawTriage();
   });
   $("#filters").addEventListener("click", (e) => {
     const b = e.target.closest("[data-f]"); if (!b) return;
     tstate.on.has(b.dataset.f) ? tstate.on.delete(b.dataset.f) : tstate.on.add(b.dataset.f); drawTriage();
   });
   $("#tq").addEventListener("input", (e) => { tstate.q = e.target.value.trim().toLowerCase(); drawTriage(); });
+  $("#tcount").addEventListener("click", (e) => { if (e.target.id === "tscope-clear") { tstate.scope = null; drawTriage(); } });
   $("#ttable").addEventListener("click", (e) => {
     const h = e.target.closest("[data-sort]");
     if (h) { const k = h.dataset.sort; setSort(k, tstate.sort === k ? (tstate.dir === "asc" ? "desc" : "asc") : undefined); drawTriage(); return; }
@@ -919,11 +985,11 @@ function renderTriage() {
 function drawTriage() {
   for (const [id] of FILTERS) $(`#f-${id}`).setAttribute("aria-pressed", String(tstate.on.has(id)));
   const tests = FILTERS.filter(([id]) => tstate.on.has(id)).map(([, , f]) => f);
-  let rows = Object.entries(MAP.prs).filter(([, p]) => tests.every((f) => f(p)) && (!tstate.q || p.t.toLowerCase().includes(tstate.q) || p.by.toLowerCase().includes(tstate.q) || String(p.n) === tstate.q.replace(/^#/, "")));
+  let rows = Object.entries(MAP.prs).filter(([, p]) => tests.every((f) => f(p)) && inScope(p) && (!tstate.q || p.t.toLowerCase().includes(tstate.q) || p.by.toLowerCase().includes(tstate.q) || String(p.n) === tstate.q.replace(/^#/, "")));
   const [key, , says] = SORTS[tstate.sort], sign = tstate.dir === "asc" ? 1 : -1;
   // ties keep the longest-open first, then the lower number, so every order is the same on every load
   rows.sort((a, b) => { const x = key(a[1]), y = key(b[1]); return (x < y ? -sign : x > y ? sign : 0) || b[1].age - a[1].age || a[1].n - b[1].n; });
-  $("#tcount").textContent = `${rows.length} of ${Object.keys(MAP.prs).length} open PRs · sorted ${says[tstate.dir === "asc" ? 0 : 1]}`;
+  $("#tcount").innerHTML = `<span id="tnum">${rows.length}</span> of ${Object.keys(MAP.prs).length} open PRs · sorted ${esc(says[tstate.dir === "asc" ? 0 : 1])}${tstate.scope ? ` · <span id="tscope">${esc(tstate.scope.label)}</span> <button type="button" class="chipbtn" id="tscope-clear">clear</button>` : ""}`;
   const head = `<thead><tr>${COLS.map(([k, label]) => { const on = tstate.sort === k;
     return `<th class="${["age", "conf", "breaks", "size", "tests"].includes(k) ? "n" : ""}" aria-sort="${on ? (tstate.dir === "asc" ? "ascending" : "descending") : "none"}"><button type="button" data-sort="${k}" title="Sort: ${esc(SORTS[k][2][SORTS[k][1] === "asc" ? 0 : 1])}; again to reverse">${esc(label)}<span class="sort${on ? " on" : ""}">${on ? (tstate.dir === "asc" ? "▲" : "▼") : "⇅"}</span></button></th>`; }).join("")}</tr></thead>`;
   const body = (tstate.all ? rows : rows.slice(0, TRIAGE_ROWS)).map(([n, p]) => `<tr data-n="${n}"><td>${prLink(n)}</td><td class="t">${esc(p.t)}${draft(n)}${branchOf(p)}<div class="by">${esc(p.by)} · ${esc(p.updated)}</div></td>
@@ -975,5 +1041,5 @@ function wireLookup() {
   $("#q").value = ex[0]; lookup(ex[0]);
 }
 
-renderStamp(); renderStart(); renderAreas(); renderConformance(); renderTwice(); renderMerge(); renderReleases(); renderMethod(); renderTriage(); renderPath(); renderGlance(); renderSince(); wireLookup(); wireFolds();
+renderStamp(); renderStart(); renderAreas(); renderConformance(); renderTwice(); renderMerge(); renderReleases(); renderMethod(); renderTriage(); renderQueues(); renderPath(); renderGlance(); renderSince(); wireLookup(); wireFolds();
 </script>

@@ -19,6 +19,7 @@ import argparse
 import importlib.util
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -69,6 +70,9 @@ DEFAULTS = {
     "tests_re": None,                   # a PR's test files (default: those under tests/)
     "mechanical_conflicts": "stop",     # "resolve": a PR conflicting with the base only in mechanical files is still paired there
     "stale_conflicts": "link",          # "apart": code conflicts found branch to branch neither group nor block
+    "pair_files": "all",                # "code": pairs that share only mechanical files are not merged
+    "codeowners": True,                 # owner queues from CODEOWNERS on each PR's target branch
+    "status_labels": {},                # label -> "review" or "author": what the label says the PR waits on
 }
 
 
@@ -174,12 +178,13 @@ def check_page(argv: list[str]) -> int:
     if importlib.util.find_spec("playwright"):
         return subprocess.run([sys.executable, str(script), str(page), *(["--shots", str(shots)] if shots else [])]).returncode
     if shutil.which("docker"):
-        mounts = ["-v", f"{page}:/page/index.html:ro", "-v", f"{script}:/opt/check/page_check.py:ro"]
+        # the page's directory, not the page alone: the data files it links sit beside it
+        mounts = ["-v", f"{page.parent}:/page:ro", "-v", f"{script}:/opt/check/page_check.py:ro"]
         if shots:
             shots.mkdir(parents=True, exist_ok=True)
             mounts += ["-v", f"{shots}:/shots"]
         inner = ("pip install -q --break-system-packages playwright==1.63.0 >/dev/null 2>&1; "
-                 "python3 /opt/check/page_check.py /page/index.html" + (" --shots /shots" if shots else ""))
+                 f"python3 /opt/check/page_check.py {shlex.quote('/page/' + page.name)}" + (" --shots /shots" if shots else ""))
         return subprocess.run(["docker", "run", "--rm", f"--cpus={args.threads}", "--ipc=host", "-w", "/tmp", *mounts,
                                PLAYWRIGHT_IMAGE, "bash", "-c", inner]).returncode
     print("check-page needs Playwright for Python (pip install playwright, then playwright install chromium) or Docker",

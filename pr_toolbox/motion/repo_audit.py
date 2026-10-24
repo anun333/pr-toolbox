@@ -463,7 +463,10 @@ for n in normal:
     for path, f in prs[n]["files"].items():
         by_file[path].add(n)
         by_file[f["old"]].add(n)
-share = {(a, b) for ns in by_file.values() for a, b in combinations(sorted(ns), 2)}
+# With "pair_files": "code", pairs that share only mechanical files are not merged: they can only need a rebase, never
+# a decision, and on php-src (NEWS alone is in 185 PRs) they were half of the 37,182 pairs and of the pair stage's time.
+CODE_PAIRS = P.get("pair_files") == "code"
+share = {(a, b) for path, ns in by_file.items() if not (CODE_PAIRS and MECHANICAL.match(path)) for a, b in combinations(sorted(ns), 2)}
 pair_cache = W / "pairs.json"
 pairs = json.loads(pair_cache.read_text()) if pair_cache.exists() else {}
 pairs = pairs if (pairs.get("master") == MASTER_SHA or moved is not None) and pairs.get("mode", "stop") == MODE else {"master": MASTER_SHA, "pairs": {}}

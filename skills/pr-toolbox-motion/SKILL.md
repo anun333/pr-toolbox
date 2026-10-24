@@ -94,6 +94,10 @@ Add a `motion` section to `.pr-toolbox.json`. Every key has a neutral default, a
 - **`anchors`:** the semantic candidates' domain resources, schema file, route pattern, and the helper methods to ignore.
 - **`streams`:** the areas. Each has `target`s quoted with `source` and `url`, `plan` issues, `direction` patterns the plan retires, `measures` counted per release, `todo` cuts (batches by folder, checklist issues, plan issues as items), and `before` advice.
 - **`controls`:** known cases, each `{name, prs, in, match | key, contains, expect}`.
+- **`merge_up`, `landings`:** release branches merged up into the base (their PRs are compared too, diffed from their own branch, merged up the chain), and `"merge+commit"` for a project that lands PRs by pushing their commits.
+- **`quote_sources`:** quoted documents outside the repository: `{match, raw, clean}`.
+- **`mechanical_conflicts`, `stale_conflicts`, `pair_files`:** `"resolve"` pairs a PR on the base when its only conflicts are mechanical; `"apart"` keeps conflicts found head to head out of groups and blockers; `"code"` skips pairs that share only mechanical files.
+- **`codeowners`, `status_labels`:** owner queues from CODEOWNERS on each PR's target branch; labels with what they say a PR waits on (`"review"` or `"author"`), so the page lists where the build disagrees.
 
 ## Traps
 
@@ -124,6 +128,10 @@ Add a `motion` section to `.pr-toolbox.json`. Every key has a neutral default, a
 22. Two stacked PRs share one version bump by design. That is not a collision.
 23. Measure the page as a reader first meets it, with nothing opened. A check that opens sections first measures something else.
 24. A check run on the page before a change must fail, or it proves nothing. Of four checks written for one release, two passed on the old page: one checked a case-sensitive word against capitals the page displays, and one tested a bug the old page didn't have yet.
+25. GitHub's `refs/pull/<n>/head` can be missing (php-src #24439 had only its merge ref) or behind the head GitHub reports (#21778). Take the head from the API and check every fetched ref against it.
+26. Two heads with far-apart bases conflict wherever both sides of the history between them changed a file. Count a head-to-head conflict only in files both PRs change: php-src's first build counted 7,953 code-conflict pairs, 718 after.
+27. A conflict only in mechanical files (php-src's NEWS, after nearly every fix) still sends a PR's pairs head to head unless `mechanical_conflicts` is `"resolve"`.
+28. A check that reads a cell's text reads its pills too: two PRs with one title on two branches sorted "wrong" by their branch pill. Read the value itself. And a title's leading space sorts first but doesn't show.
 
 ## Changing pr-toolbox motion
 

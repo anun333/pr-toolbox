@@ -236,6 +236,32 @@ def desktop(pg):
         first = PRS[up]["merge_up"][0]["branch"].lower()
         check("a release-branch PR's card names its branch and its merge-up conflicts",
               PRS[up]["base"].lower() in card.splitlines()[0] and "merge-up conflict" in card and f"into {first}" in card, card[:140])
+    # queues: a count lists exactly that many PRs in triage, says which, and clearing it brings the rest back
+    cells = pg.eval_on_selector_all("#queues-body button[data-qk]", "bs => bs.map(b => [b.dataset.qk, b.dataset.qv, b.dataset.qs, +b.textContent])")
+    check("queues: counts to select", bool(cells) or not PRS, f"{len(cells)} counts")
+    if cells:
+        kind, value, state, want = max(cells, key=lambda c: (c[2] == "unreviewed", c[3] < 200, c[3]))
+        press(pg, f'#queues-body button[data-qk="{kind}"][data-qv="{value}"][data-qs="{state}"]', 400)
+        shown, scope = count_shown(pg), pg.inner_text("#tscope") if pg.query_selector("#tscope") else ""
+        check("queues: a count lists that many PRs in triage, and says which", shown == want and bool(scope), f"{kind} {value} {state}: count {want}, triage {shown}, scope {scope!r}")
+        press(pg, "#tscope-clear", 400)
+        check("queues: clearing the scope brings the rest back", pg.query_selector("#tscope") is None and count_shown(pg) > want or count_shown(pg) == len(PRS),
+              pg.inner_text("#tcount")[:80])
+    has_owners = any(p.get("owners") for p in PRS.values())
+    check("queues: an owner table when CODEOWNERS names someone", (pg.query_selector('[data-queue="owner"]') is not None) == has_owners, f"owners in the data: {has_owners}")
+    twins = (MAP.get("duplicates") or {}).get("same_title") or []
+    if twins:
+        twice = pg.inner_text("#twice-body").split("One fix, two PRs".upper() if "ONE FIX, TWO PRS" in pg.inner_text("#twice-body") else "One fix, two PRs")[-1]
+        missing = [t["prs"] for t in twins if not all(f"#{n}" in twice for n in t["prs"])]
+        check("same work twice: every fix opened twice is named", not missing, missing[:3])
+    if MAP.get("exports"):
+        hrefs = pg.eval_on_selector_all("#data a[download]", "as => as.map(a => a.getAttribute('href'))")
+        files = sorted(MAP["exports"].values())
+        check("the data files are linked and sit beside the page", sorted(hrefs) == files and all((PAGE.parent / f).exists() for f in files), f"{hrefs} / {files}")
+    gaps = (MAP.get("labels_vs_build") or {}).get("gaps")
+    if (MAP.get("labels_vs_build") or {}).get("labels"):
+        listed = pg.eval_on_selector_all("#label-gaps li.prline", "ls => ls.length")
+        check("labels the build disagrees with: each one listed", listed == len(gaps), f"page {listed}, build {len(gaps)}")
     # a code conflict found only head to head ("stale_conflicts": "apart") has its own line, not the mechanical one
     later = next((n for n, p in PRS.items() if any(c["kind"] == "after a rebase" for c in p.get("conflicts", []))), None)
     if later:

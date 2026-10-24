@@ -13,6 +13,8 @@
     "landings": "merge+commit",
     "mechanical_conflicts": "resolve",
     "stale_conflicts": "apart",
+    "pair_files": "code",
+    "status_labels": {"Waiting on Review": "review", "Waiting on Author": "author"},
     "mechanical": "^(NEWS|UPGRADING|UPGRADING\\.INTERNALS|Zend/Optimizer/zend_func_infos\\.h|Zend/zend_vm_execute\\.h|Zend/zend_vm_handlers\\.h|Zend/zend_vm_opcodes\\.c|Zend/zend_vm_opcodes\\.h|ext/ffi/ffi_parser\\.c|ext/fileinfo/data_file\\.c|ext/mbstring/libmbfl/mbfl/eaw_table\\.h|ext/mbstring/rare_cp_bitvec\\.h|ext/mbstring/unicode_data\\.h|ext/phar/stub\\.h|ext/standard/credits_ext\\.h|ext/standard/credits_sapi\\.h|ext/standard/html_tables\\.h|ext/tokenizer/tokenizer_data\\.c|main/debug_gdb_scripts\\.c|main/php_version\\.h|sapi/cli/mime_type_map\\.h|win32/cp_enc_map\\.c|.*_arginfo\\.h|.*_decl\\.h)$",
     "mechanical_note": "NEWS, UPGRADING, UPGRADING.INTERNALS and the files php-src's scripts generate: every *_arginfo.h and *_decl.h from its stub, the VM's zend_vm_execute.h, zend_vm_handlers.h and zend_vm_opcodes, tokenizer_data.c, php_version.h and the other generated tables",
     "release_tags": {"pattern": "^php-(\\d+)\\.(\\d+)\\.0$", "count": 5},

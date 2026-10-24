@@ -948,7 +948,7 @@ function renderQueues() {
     parts.push(`<div class="panel" id="label-gaps"><h3>Labels the build disagrees with</h3><p class="muted">Status labels say what a PR waits on: ${Object.entries(MAP.labels_vs_build.labels).map(([l, w]) => `<b>${esc(l)}</b> (${w === "review" ? "its reviewers" : "its author"})`).join(", ")}. Listed here when this build finds otherwise, oldest first.</p>
       <ul class="plain">${gaps.map((g) => `<li class="prline"><span class="num">${prLink(g.n)}</span><span>${esc(pr(g.n)?.t || "")}<div class="muted" style="font-size:.85rem">labelled ${esc(g.label)}, so ${esc(g.says)}, but: ${g.but.map(esc).join(", ")}</div></span></li>`).join("") || "<li>None.</li>"}</ul></div>`);
   }
-  if (MAP.exports) parts.push(`<div class="panel" id="data"><h3>The data</h3><p>One row per open PR, with each state above, its blockers, conflicts, group, areas and owners: <a href="${esc(MAP.exports.prs_csv)}" download>CSV</a> · <a href="${esc(MAP.exports.prs_json)}" download>JSON</a>. The groups: <a href="${esc(MAP.exports.groups_json)}" download>JSON</a>.</p><p class="muted">From the same build as this page, ${esc(BASE)} ${esc(MAP.stamp.master)}, ${esc(MAP.stamp.generated)}.</p></div>`);
+  if (MAP.exports) parts.push(`<div class="panel" id="data"><h3>The data</h3><p>One row per open PR, with each state above, its blockers, conflicts, group, areas and owners: <a href="${esc(MAP.exports.prs_csv)}" download>CSV</a> · <a href="${esc(MAP.exports.prs_json)}" download>JSON</a>. The groups: <a href="${esc(MAP.exports.groups_json)}" download>JSON</a>.</p><p class="muted">From the same build as this page, ${esc(BASE)} ${esc(MAP.stamp.master)}, ${esc(MAP.stamp.generated)}.</p><p class="muted" id="data-note"></p></div>`);
   $("#queues-body").innerHTML = parts.join("");
   $("#queues-body").addEventListener("click", (e) => {
     const b = e.target.closest("button[data-qk]"); if (!b) return;
@@ -956,6 +956,31 @@ function renderQueues() {
     tstate.on = new Set(); tstate.q = ""; $("#tq").value = ""; tstate.all = false; drawTriage();
     $("#triage").scrollIntoView({ behavior: "smooth", block: "start" });
   });
+}
+
+/* Opened as a file, the data links are plain downloads. Framed in the claude.ai viewer a page can't follow a download
+   link, so there they save through the viewer's downloads capability, which asks the viewer first. */
+function wireDownloads() {
+  if (!MAP.exports || !window.claude || typeof window.claude.use !== "function") return;
+  const note = (t) => { const el = $("#data-note"); if (el) el.textContent = t; };
+  const slug = String(PF.project || "project").replace(/[^A-Za-z0-9._-]+/g, "-");
+  window.claude.use("downloads").then((dl) => {
+    if (!dl) { note("Saving files isn't available in this view."); return; }
+    $("#data")?.addEventListener("click", async (e) => {
+      const a = e.target.closest("a[download]"); if (!a) return;
+      e.preventDefault();
+      try {
+        const res = await fetch(a.getAttribute("href"));
+        if (!res.ok) throw { code: "unavailable" };
+        await dl.save({ filename: `${slug}-${a.getAttribute("href")}`, data: await res.blob() });
+        note("");
+      } catch (err) {
+        const code = (err && err.code) || "unavailable";
+        if (code === "declined") return;
+        note(code === "rate_limited" ? "A save is already waiting for an answer; try again in a moment." : `That file couldn't be saved here (${code}).`);
+      }
+    });
+  }, () => note("Saving files isn't available in this view."));
 }
 
 function renderTriage() {
@@ -1041,5 +1066,5 @@ function wireLookup() {
   $("#q").value = ex[0]; lookup(ex[0]);
 }
 
-renderStamp(); renderStart(); renderAreas(); renderConformance(); renderTwice(); renderMerge(); renderReleases(); renderMethod(); renderTriage(); renderQueues(); renderPath(); renderGlance(); renderSince(); wireLookup(); wireFolds();
+renderStamp(); renderStart(); renderAreas(); renderConformance(); renderTwice(); renderMerge(); renderReleases(); renderMethod(); renderTriage(); renderQueues(); wireDownloads(); renderPath(); renderGlance(); renderSince(); wireLookup(); wireFolds();
 </script>

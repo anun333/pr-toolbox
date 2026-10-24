@@ -20,7 +20,7 @@ SHOTS = Path(sys.argv[sys.argv.index("--shots") + 1]) if "--shots" in sys.argv e
 URL = PAGE.as_uri()
 MAP = json.loads(re.search(r"const MAP = (\{.*?\});\n", PAGE.read_text()).group(1))
 PRS = MAP["prs"]
-CONTAINERS = ["stamp", "glance-row", "path-body", "presets", "filters", "ttable", "general", "area-list", "twice-body",
+CONTAINERS = ["stamp", "glance-row", "path-body", "presets", "filters", "ttable", "general", "area-list", "twice-body", "queues-body",
               "merge-stats", "merge-body", "release-table", "method-body"]
 CODE_AS_TEXT = ["${", "[object Object]", "esc(", " 1 PRs "]
 fails = []
@@ -316,6 +316,33 @@ with sync_playwright() as p:
             desktop(pg)
         check(f"{label}: no script errors", not errors, errors[:3])
         pg.close()
+    if MAP.get("exports"):
+        # framed in the claude.ai viewer, a page can't follow a download link: the data links must save through the
+        # viewer's downloads capability. A stand-in viewer records what the page asks to save.
+        # served over HTTP, as the viewer serves it: a page opened as a file may not fetch its neighbours
+        import functools
+        import http.server
+        import threading
+
+        class Quiet(http.server.SimpleHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+        srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(Quiet, directory=str(PAGE.parent)))
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        pg = browser.new_page(viewport={"width": 1280, "height": 900})
+        pg.add_init_script("""window.__saved = []; window.claude = { use: (name) => Promise.resolve(name === "downloads"
+            ? { save: (r) => { window.__saved.push([r.filename, r.data && r.data.size]); return Promise.resolve({ status: "saved" }); } } : null) };""")
+        pg.goto(f"http://127.0.0.1:{srv.server_address[1]}/{PAGE.name}", wait_until="networkidle")
+        pg.wait_for_timeout(800)
+        pg.click('#data a[href$=".csv"]')
+        pg.wait_for_timeout(800)
+        saved = pg.evaluate("window.__saved")
+        csv_name = MAP["exports"]["prs_csv"]
+        check("in the viewer, a data link saves through the downloads capability",
+              len(saved) == 1 and saved[0][0].endswith(csv_name) and (saved[0][1] or 0) == (PAGE.parent / csv_name).stat().st_size,
+              saved or (pg.inner_text("#data-note") if pg.query_selector("#data-note") else "nothing saved, and no note on the page"))
+        pg.close()
+        srv.shutdown()
     browser.close()
 print(f"{len(fails)} failed" + (": " + ", ".join(fails) if fails else ""))
 sys.exit(1 if fails else 0)

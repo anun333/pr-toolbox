@@ -294,7 +294,7 @@
         {
           "label": "legacy sql.inc.php calls",
           "kind": "regex",
-          "pattern": "\\bsql(Statement|Query|Insert|FetchArray|StatementNoLog|QueryNoLog|NumRows|BeginTrans|CommitTrans|RollbackTrans|ListFields|StatementThrowException)\\s*\\("
+          "pattern": "(?<!::)(?<!->)\\bsql(Statement|Query|Insert|FetchArray|StatementNoLog|QueryNoLog|NumRows|BeginTrans|CommitTrans|RollbackTrans|ListFields|StatementThrowException)\\s*\\("
         }
       ],
       "before": [
@@ -305,7 +305,7 @@
         {
           "id": "sql",
           "label": "legacy sql.inc.php calls",
-          "pattern": "\\bsql(Statement|Query|Insert|FetchArray|StatementNoLog|QueryNoLog|NumRows|BeginTrans|CommitTrans|RollbackTrans|ListFields|StatementThrowException)\\s*\\(",
+          "pattern": "(?<!::)(?<!->)\\bsql(Statement|Query|Insert|FetchArray|StatementNoLog|QueryNoLog|NumRows|BeginTrans|CommitTrans|RollbackTrans|ListFields|StatementThrowException)\\s*\\(",
           "kind": "regex"
         }
       ],
@@ -321,7 +321,7 @@
             {
               "issue": 10182,
               "title": "sqlBeginTrans family to the transaction abstraction",
-              "pattern": "\\bsql(BeginTrans|CommitTrans|RollbackTrans)\\s*\\("
+              "pattern": "(?<!::)(?<!->)\\bsql(BeginTrans|CommitTrans|RollbackTrans)\\s*\\("
             },
             {
               "issue": 10183,

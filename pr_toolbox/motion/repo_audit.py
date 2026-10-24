@@ -19,6 +19,7 @@ Reads git objects and patches as text; runs nothing from them. Each PR's head mu
 
     WIM_PROFILE=<profile.json> python3 -I repo_audit.py <clone> <work dir> <pr list file: "number base" per line>
 """
+import hashlib
 import json
 import os
 import re
@@ -104,6 +105,8 @@ NAME_PATHS = P["name_paths"]
 # Patterns the plan retires, counted in each PR's added and removed lines (the profile's streams, "direction").
 STREAMS = P["streams"]
 DIRECTION = [d for s in STREAMS["streams"] for d in s.get("direction", [])]
+# The cache key is the patterns themselves, so a corrected pattern recounts every PR, not only a new one.
+DIRECTION_V = hashlib.sha256(json.dumps(DIRECTION, sort_keys=True).encode()).hexdigest()[:12]
 
 # --- 1. Each PR's changes, against its merge base with master (or with its release branch); cached by the PR's head --
 prs = {}
@@ -114,7 +117,7 @@ HEADS = {n: git("rev-parse", f"refs/pr/{n}").stdout.strip() for n in NUMBERS}
 UP_TIP = {b: git("rev-parse", f"{P['remote']}/{b}").stdout.strip() for b in MERGE_UP}
 BASES = {n: git("merge-base", UP_TIP[BASE_OF[n]] if BASE_OF[n] else MASTER, f"refs/pr/{n}").stdout.strip() for n in NUMBERS}
 prs = {n: e for n, e in prs.items() if n in HEADS and e.get("head") == HEADS[n] and e.get("base") == BASES[n]
-       and e.get("direction_v") == len(DIRECTION) and "name_removed" in e}
+       and e.get("direction_v") == DIRECTION_V and "name_removed" in e}
 for n in NUMBERS:
     if n in prs:
         continue
@@ -128,7 +131,7 @@ for n in NUMBERS:
         old, new = (parts[1], parts[2]) if st == "R" else (parts[1], parts[1])
         files[new] = {"status": st, "old": old}
     entry = {"base": base, "head": HEADS[n], "files": files, "php": {}, "added_by_file": {}, "name_lines": {},
-             "direction": {}, "direction_v": len(DIRECTION)}
+             "direction": {}, "direction_v": DIRECTION_V}
     for path, f in files.items():
         if not path.endswith(".php") or len(files) > MASS:
             continue

@@ -1,0 +1,127 @@
+{
+  "_about": "Hand-written judgement for php-src's work-in-motion map: each quote as php-src's maintainers wrote it (CONTRIBUTING.md, the php/policies repository, accepted RFCs and the release plan on wiki.php.net), with its source. Areas without a quoted plan group PRs by path only. Paths for the areas follow EXTENSIONS and CODEOWNERS, as ~/dev/php's map extracts them.",
+  "rules_package": null,
+  "general_heading": "From CONTRIBUTING.md, the php/policies repository and the PHP 8.6 release plan",
+  "general": [
+    {
+      "text": "If an open pull request already addresses the problem, help test or review it to make it better instead of opening an equivalent pull request.",
+      "source": "CONTRIBUTING.md, Pull requests",
+      "url": "https://github.com/php/php-src/blob/master/CONTRIBUTING.md"
+    },
+    {
+      "text": "When multiple pull requests provide equivalent fixes of comparable quality, we follow a first-come, first-served principle. We prefer the first correct pull request.",
+      "source": "CONTRIBUTING.md, Pull requests",
+      "url": "https://github.com/php/php-src/blob/master/CONTRIBUTING.md"
+    },
+    {
+      "text": "If you are fixing a bug, then please submit your PR against the lowest actively supported branch of PHP that the bug affects",
+      "source": "CONTRIBUTING.md, Pull requests",
+      "url": "https://github.com/php/php-src/blob/master/CONTRIBUTING.md"
+    },
+    {
+      "text": "Pull requests implementing RFCs should be submitted against `master`.",
+      "source": "CONTRIBUTING.md, Pull requests",
+      "url": "https://github.com/php/php-src/blob/master/CONTRIBUTING.md"
+    },
+    {
+      "text": "Internal API changes (those that do not affect the user-facing API), as well as user-facing features in extensions and SAPIs, do not require an RFC unless a core developer (someone with commit access to php-src) raises an objection or requests an RFC within one month of the implementation pull request being opened.",
+      "source": "php/policies release-process.rst, Feature selection and development",
+      "url": "https://github.com/php/policies/blob/main/release-process.rst"
+    },
+    {
+      "text": "Security fixes, compatibility build fixes, fixes to address regressions introduced during a normal bug fix release, and fixes for crashes like use after free or segmentation faults.",
+      "source": "php/policies release-process.rst, what a branch takes in its third year (PHP-8.3 now)",
+      "url": "https://github.com/php/policies/blob/main/release-process.rst"
+    },
+    {
+      "text": "Hard feature freeze: features, whether requiring an RFC or not, must be merged only with approval from the RMs.",
+      "source": "PHP 8.6 release plan, Sep 22 2026",
+      "url": "https://wiki.php.net/todo/php86"
+    },
+    {
+      "text": "Bundled PHP extensions SHOULD use namespaces, subject to the guidelines laid out in the following:",
+      "source": "php/policies coding-standards-and-naming.rst, Bundled Extensions",
+      "url": "https://github.com/php/policies/blob/main/coding-standards-and-naming.rst"
+    }
+  ],
+  "streams": [
+    {
+      "id": "streams",
+      "title": "Streams and I/O",
+      "summary": "PHP 8.6 adds stream error handling, a polling API and TLS session resumption; IO hooks are under discussion.",
+      "target": [
+        {
+          "text": "This RFC proposes a unified error handling system for PHP streams that provides:",
+          "source": "Stream Error Handling Improvements RFC (implemented in PHP 8.6), Introduction",
+          "url": "https://wiki.php.net/rfc/stream_errors"
+        }
+      ],
+      "plan": [],
+      "labels": [],
+      "title_re": "(?i)\\bstreams?\\b|\\bpoll(ing)?\\b|io[_ ]uring|\\bsockets?\\b",
+      "paths": ["main/streams/", "main/network.c", "ext/standard/streamsfuncs.c", "ext/standard/file.c", "ext/standard/fsock.c", "ext/standard/http_fopen_wrapper.c", "ext/standard/ftp_fopen_wrapper.c", "ext/openssl/xp_ssl.c", "ext/sockets/"],
+      "direction": []
+    },
+    {
+      "id": "uri",
+      "title": "URI",
+      "summary": "ext/uri landed in PHP 8.5; its follow-up RFC is accepted and partly implemented.",
+      "target": [
+        {
+          "text": "This RFC proposes a set of follow-up improvements to the URL Parsing API RFC.",
+          "source": "Followup Improvements for ext/uri RFC (accepted), Introduction",
+          "url": "https://wiki.php.net/rfc/uri_followup"
+        }
+      ],
+      "plan": [],
+      "labels": [],
+      "title_re": "(?i)\\buri\\b|\\burl\\b|whatwg|rfc ?3986",
+      "paths": ["ext/uri/"],
+      "direction": []
+    },
+    {
+      "id": "resources",
+      "title": "Resources to objects",
+      "summary": "Each remaining resource type is to become an object; a new resource type goes the other way.",
+      "target": [
+        {
+          "text": "As eliminating resources altogether should be a strategic goal for PHP",
+          "source": "Resource to object conversion RFC (accepted), Discussion",
+          "url": "https://wiki.php.net/rfc/resource_to_object_conversion"
+        }
+      ],
+      "plan": [],
+      "labels": [],
+      "title_re": "(?i)resource.{0,20}object|to objects?\\b",
+      "paths": [],
+      "direction": [
+        {"id": "new_resource_type", "label": "resource types registered", "pattern": "\\bzend_register_list_destructors_ex\\s*\\(", "kind": "regex"}
+      ]
+    },
+    {"id": "engine", "title": "Zend engine", "summary": "The language engine: compiler, executor, VM, garbage collector, allocator.", "target": [], "plan": [], "labels": [], "paths": ["Zend/", "TSRM/"], "direction": []},
+    {"id": "opcache", "title": "OPcache and the JIT", "summary": "ext/opcache, including the JIT and its optimizer.", "target": [], "plan": [], "labels": [], "paths": ["ext/opcache/"], "direction": []},
+    {"id": "sapi", "title": "Server APIs", "summary": "CLI, FPM, CGI, Apache's handler, embed, LiteSpeed and phpdbg.", "target": [], "plan": [], "labels": [], "paths": ["sapi/", "main/SAPI.c", "main/SAPI.h"], "direction": []},
+    {"id": "standard", "title": "ext/standard", "summary": "The standard library's functions; not listed in EXTENSIONS, and the busiest directory outside the engine.", "target": [], "plan": [], "labels": [], "paths": ["ext/standard/"], "direction": []},
+    {"id": "databases", "title": "Database extensions", "summary": "PDO and its drivers, mysqli and mysqlnd, pgsql, sqlite3, odbc and dba.", "target": [], "plan": [], "labels": [], "paths": ["ext/pdo", "ext/mysqli/", "ext/mysqlnd/", "ext/pgsql/", "ext/sqlite3/", "ext/odbc/", "ext/dba/"], "direction": []},
+    {
+      "id": "xml",
+      "title": "XML extensions",
+      "summary": "dom, libxml, simplexml, soap, xml, xmlreader, xmlwriter and xsl, which EXTENSIONS marks Orphan, and lexbor.",
+      "target": [
+        {
+          "text": "EXTENSIONS has listed eight of these as Orphan since 2026-04-12, and as Odd fixes before that (soap for longer; the other seven from 2026-02-16); CODEOWNERS still names a reviewer for each of the eight, and work goes on (ext/dom: 96 commits by 26 authors in the 12 months to 2026-10-24).",
+          "source": "our reading of EXTENSIONS, CODEOWNERS and git log (~/dev/php map, 20-machinery/areas.md)",
+          "url": "https://github.com/php/php-src/blob/master/EXTENSIONS",
+          "summary": true
+        }
+      ],
+      "plan": [],
+      "labels": [],
+      "paths": ["ext/dom/", "ext/libxml/", "ext/simplexml/", "ext/soap/", "ext/xml/", "ext/xmlreader/", "ext/xmlwriter/", "ext/xsl/", "ext/lexbor/"],
+      "direction": []
+    },
+    {"id": "build", "title": "Build, CI and tests", "summary": "The build system, CI workflows, Windows build and the test runner.", "target": [], "plan": [], "labels": [], "paths": ["build/", "scripts/", "win32/", ".github/", ".circleci/", "configure.ac", "run-tests.php", "buildconf"], "direction": []},
+    {"id": "core", "title": "main/", "summary": "PHP's core outside the engine: request startup and shutdown, output, ini handling, variables.", "target": [], "plan": [], "labels": [], "paths": ["main/"], "direction": []},
+    {"id": "extensions", "title": "Other extensions", "summary": "The other bundled extensions: intl, mbstring, openssl, curl, gd, date, random, spl, reflection and the rest.", "target": [], "plan": [], "labels": [], "paths": ["ext/bcmath/", "ext/bz2/", "ext/calendar/", "ext/com_dotnet/", "ext/ctype/", "ext/curl/", "ext/date/", "ext/enchant/", "ext/exif/", "ext/ffi/", "ext/fileinfo/", "ext/filter/", "ext/ftp/", "ext/gd/", "ext/gettext/", "ext/gmp/", "ext/hash/", "ext/iconv/", "ext/intl/", "ext/json/", "ext/ldap/", "ext/mbstring/", "ext/openssl/", "ext/pcntl/", "ext/pcre/", "ext/phar/", "ext/posix/", "ext/random/", "ext/readline/", "ext/reflection/", "ext/session/", "ext/shmop/", "ext/snmp/", "ext/sodium/", "ext/spl/", "ext/sysvmsg/", "ext/sysvsem/", "ext/sysvshm/", "ext/tidy/", "ext/tokenizer/", "ext/zip/", "ext/zlib/"], "direction": []}
+  ]
+}

@@ -453,8 +453,9 @@ class FetchPages(unittest.TestCase):
     def setUpClass(cls) -> None:
         import ast
         tree = ast.parse((MOTION / "fetch.py").read_text())
-        keep = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in {"read_pages", "split_by_base"}]
-        cls.ns = {"json": json}
+        keep = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in {"read_pages", "split_by_base", "landed_by", "quote_raw_url",
+                                                                                     "quote_source_for", "clean_quoted"}]
+        cls.ns = {"json": json, "re": re}
         exec(compile(ast.Module(body=keep, type_ignores=[]), "fetch.py", "exec"), cls.ns)
 
     def test_a_page_that_times_out_is_asked_for_at_half_the_size(self) -> None:
@@ -480,7 +481,7 @@ class FetchPages(unittest.TestCase):
         import ast
         from datetime import date, timedelta
         tree = ast.parse((MOTION / "fetch.py").read_text())
-        keep = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "merged_between"]
+        keep = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in {"merged_between", "landed_by"}]
         reads = []
 
         def run(*args):
@@ -525,6 +526,295 @@ class FetchPages(unittest.TestCase):
         prs = [{"number": 1, "baseRefName": "develop"}, {"number": 2, "baseRefName": "release/0.31-stable"}, {"number": 3, "baseRefName": "develop"}]
         on, off = self.ns["split_by_base"](prs, "develop")
         self.assertEqual(([1, 3], [2]), ([p["number"] for p in on], [p["number"] for p in off]))
+
+    def test_prs_on_a_branch_merged_up_are_kept(self) -> None:
+        # php-src: PHP-8.4 is merged up into master after every change; PHP-8.1 no longer is
+        prs = [{"number": 1, "baseRefName": "master"}, {"number": 2, "baseRefName": "PHP-8.4"}, {"number": 3, "baseRefName": "PHP-8.1"}]
+        on, off = self.ns["split_by_base"](prs, "master", ["PHP-8.4", "PHP-8.5"])
+        self.assertEqual(([1, 2], [3]), ([p["number"] for p in on], [p["number"] for p in off]))
+
+    def test_a_pr_closed_by_a_commit_was_landed_by_its_committer(self) -> None:
+        by_commit = {"timelineItems": {"nodes": [{"closer": {"__typename": "Commit", "committer": {"user": {"login": "bukka"}}}}]}}
+        by_hand = {"timelineItems": {"nodes": [{"closer": None}]}}
+        by_pr = {"timelineItems": {"nodes": [{"closer": {"__typename": "PullRequest"}}]}}
+        landed = self.ns["landed_by"]
+        self.assertEqual(("bukka", None, None), (landed(by_commit, "closed"), landed(by_hand, "closed"), landed(by_pr, "closed")))
+        self.assertEqual("girgias", landed({"mergedBy": {"login": "girgias"}}, "merged"))
+        self.assertIsNone(landed(by_commit, "merged"), "a merge search reads the merger, never the closing commit")
+
+    def test_a_quote_outside_the_repository_reads_its_raw_text(self) -> None:
+        sources = [{"match": r"^https://wiki\.php\.net/(rfc/[^?#]+)", "raw": "https://wiki.php.net/{0}?do=export_raw"}]
+        raw = self.ns["quote_raw_url"]
+        self.assertEqual("https://wiki.php.net/rfc/release_cycle_update?do=export_raw",
+                         raw("https://wiki.php.net/rfc/release_cycle_update#extend_security_support_by_one_year", sources))
+        self.assertIsNone(raw("https://github.com/php/php-src/issues/1", sources))
+        self.assertIsNone(raw("https://wiki.php.net/rfc/x", []))
+
+    def test_a_quoted_wiki_page_is_matched_as_it_reads(self) -> None:
+        wiki = {"clean": [[r"\[\[[^|\]]*\|\s*([^\]]*)\]\]", r"\1"], [r"''", ""], [r"\*\*", ""]]}
+        text = "This RFC proposes a set of follow-up improvements to the [[rfc:url_parsing_api|URL Parsing API RFC]]. It extends the ''Uri\\Rfc3986\\Uri'' class; it **must** be merged."
+        self.assertEqual("This RFC proposes a set of follow-up improvements to the URL Parsing API RFC. It extends the Uri\\Rfc3986\\Uri class; it must be merged.",
+                         self.ns["clean_quoted"](text, wiki))
+        self.assertEqual(text, self.ns["clean_quoted"](text, {}), "a source without clean rules is read as it is")
+
+
+class FetchHeads(unittest.TestCase):
+    """A PR GitHub lists with no refs/pull/<n>/head is fetched from its merge ref, or from its head repository, and
+    only at the head GitHub reports."""
+
+    def test_a_pr_without_a_head_ref(self) -> None:
+        import ast
+        tree = ast.parse((MOTION / "fetch.py").read_text())
+        ns = {"subprocess": subprocess}
+        exec(compile(ast.Module(body=[n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "fetch_head"], type_ignores=[]),
+                     "fetch.py", "exec"), ns)
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        work, hub, fork, clone = tmp / "work", tmp / "hub.git", tmp / "fork", tmp / "clone"
+        work.mkdir()
+        git(work, "init", "-q", "-b", "master")
+        git(work, "config", "user.email", "t@example.org")
+        git(work, "config", "user.name", "t")
+        base = commit(work, {"a.txt": "a\n"}, "base")
+        head7 = commit(work, {"b.txt": "seven\n"}, "PR 7")
+        git(work, "checkout", "-q", "--detach", base)
+        merge7 = git(work, "commit-tree", git(work, "rev-parse", f"{head7}^{{tree}}"), "-p", base, "-p", head7, "-m", "merge 7")
+        head8 = commit(work, {"c.txt": "eight\n"}, "PR 8")
+        old8 = git(work, "rev-parse", "HEAD~0")
+        moved8 = commit(work, {"c.txt": "eight, pushed again\n"}, "PR 8, pushed again")
+        stale8 = git(work, "commit-tree", git(work, "rev-parse", f"{base}^{{tree}}"), "-p", base, "-p", old8, "-m", "stale merge 8")
+        subprocess.run(["git", "init", "-q", "--bare", str(hub)], check=True)
+        git(work, "push", "-q", str(hub), f"{base}:refs/heads/master", f"{merge7}:refs/pull/7/merge", f"{stale8}:refs/pull/8/merge",
+            f"{old8}:refs/pull/9/head")  # #9's head ref kept at an older commit than its real head, as #21778's was
+        subprocess.run(["git", "clone", "-q", str(work), str(fork)], check=True)  # the author's fork, which has every commit
+        git(fork, "update-ref", "refs/heads/pr8", moved8)
+        subprocess.run(["git", "clone", "-q", str(hub), str(clone)], check=True)
+        del head8
+        self.assertTrue(ns["fetch_head"](clone, "origin", 7, head7), "from the merge ref's second parent")
+        self.assertEqual(head7, git(clone, "rev-parse", "refs/pr/7"))
+        self.assertFalse(ns["fetch_head"](clone, "origin", 8, moved8), "a merge ref built on an older head is not the head")
+        self.assertTrue(ns["fetch_head"](clone, "origin", 8, moved8, str(fork)), "from the head repository, by the reported head")
+        self.assertEqual(moved8, git(clone, "rev-parse", "refs/pr/8"))
+        fresh = tmp / "fresh"  # a clone that hasn't seen #8's head yet
+        subprocess.run(["git", "clone", "-q", str(hub), str(fresh)], check=True, capture_output=True)
+        self.assertFalse(ns["fetch_head"](fresh, "origin", 9, moved8), "a head ref behind the reported head is not the head")
+        self.assertTrue(ns["fetch_head"](fresh, "origin", 9, moved8, str(fork)))
+        self.assertEqual(moved8, git(fresh, "rev-parse", "refs/pr/9"))
+
+
+class FarBases(unittest.TestCase):
+    """Two PRs compared branch to branch, whose bases are far apart: a conflict in a file neither changes is the history
+    between the bases, not their work (php-src #7173 against #24188: 95 such files)."""
+
+    def test_only_files_both_change(self) -> None:
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        repo = tmp / "repo"
+        repo.mkdir()
+        git(repo, "init", "-q", "-b", "master")
+        git(repo, "config", "user.email", "t@example.org")
+        git(repo, "config", "user.name", "t")
+        root = commit(repo, {"ci.yml": "h\n", "f.c": "1\n2\n3\n4\n5\n"}, "base")
+        git(repo, "checkout", "-q", "-b", "R-1")
+        commit(repo, {"ci.yml": "r\n"}, "CI changed on the branch")
+        git(repo, "checkout", "-q", "master")
+        before_merge = commit(repo, {"ci.yml": "m\n"}, "CI changed on master")
+        subprocess.run(["git", "-C", str(repo), "merge", "-q", "--no-commit", "R-1"], capture_output=True)
+        commit(repo, {"ci.yml": "m and r\n"}, "Merge branch 'R-1', conflict resolved")
+        commit(repo, {"f.c": "1 on master\n2\n3\n4\n5\n"}, "master moves on in f.c")
+        git(repo, "update-ref", "refs/remotes/origin/master", git(repo, "rev-parse", "master"))
+        git(repo, "update-ref", "refs/remotes/origin/R-1", git(repo, "rev-parse", "R-1"))
+        pr(repo, 31, before_merge, {"f.c": "1 from 31\n2\n3\n4\n5\n"})   # conflicts with master in f.c
+        pr(repo, 32, "R-1", {"f.c": "1\n2\n3\n4\n5 from 32\n"})          # on the branch; shares f.c with 31
+        del root
+        prlist = tmp / "open-prs.txt"
+        prlist.write_text("31 master\n32 R-1\n")
+        profile = tmp / "profile.json"
+        profile.write_text(json.dumps({**PROFILE, "version_claims": None, "mechanical": "$^", "names": [], "name_paths": [], "merge_up": ["R-1"]}))
+        r = subprocess.run([sys.executable, "-I", str(MOTION / "repo_audit.py"), str(repo), str(tmp / "audit"), str(prlist)],
+                           capture_output=True, text=True, env={**os.environ, "WIM_PROFILE": str(profile)})
+        self.assertEqual(0, r.returncode, r.stderr[-1500:])
+        findings = json.loads((tmp / "audit" / "findings.json").read_text())
+        pairs = json.loads((tmp / "audit" / "pairs.json").read_text())["pairs"]
+        (entry,) = pairs.values()
+        self.assertEqual(("branch to branch", ["ci.yml"]), (entry["how"], entry["files"]), "git does conflict in ci.yml")
+        self.assertEqual([], findings["text_conflict"], "but neither PR changes it")
+
+    def test_a_conflict_only_in_mechanical_files_is_paired_on_the_base(self) -> None:
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        repo = tmp / "repo"
+        repo.mkdir()
+        git(repo, "init", "-q", "-b", "master")
+        git(repo, "config", "user.email", "t@example.org")
+        git(repo, "config", "user.name", "t")
+        root = commit(repo, {"NEWS": "- one\n", "a.c": "1\n2\n3\n4\n5\n"}, "base")
+        git(repo, "update-ref", "refs/remotes/origin/master", commit(repo, {"NEWS": "- one\n- from master\n"}, "a NEWS entry lands"))
+        pr(repo, 41, root, {"NEWS": "- one\n- from 41\n", "a.c": "1 from 41\n2\n3\n4\n5\n"})   # NEWS conflicts with master
+        pr(repo, 42, "master", {"a.c": "1\n2\n3\n4\n5 from 42\n"})
+        prlist = tmp / "open-prs.txt"
+        prlist.write_text("41 master\n42 master\n")
+        out = {}
+        for mode in ("stop", "resolve"):
+            profile = tmp / f"{mode}.json"
+            profile.write_text(json.dumps({**PROFILE, "version_claims": None, "mechanical": "^NEWS$", "names": [], "name_paths": [],
+                                           "mechanical_conflicts": mode}))
+            r = subprocess.run([sys.executable, "-I", str(MOTION / "repo_audit.py"), str(repo), str(tmp / mode), str(prlist)],
+                               capture_output=True, text=True, env={**os.environ, "WIM_PROFILE": str(profile)})
+            self.assertEqual(0, r.returncode, r.stderr[-1500:])
+            (entry,) = json.loads((tmp / mode / "pairs.json").read_text())["pairs"].values()
+            out[mode] = (entry["how"], json.loads((tmp / mode / "findings.json").read_text())["summary"]["conflict_with_master"])
+        self.assertEqual(("branch to branch", [41]), out["stop"])
+        self.assertEqual(("onto master", [41]), out["resolve"], "still needs a rebase; its pair is merged on master")
+        # the same work directory, rebuilt under the other mode: nothing merged under the first is reused
+        r = subprocess.run([sys.executable, "-I", str(MOTION / "repo_audit.py"), str(repo), str(tmp / "stop"), str(prlist)],
+                           capture_output=True, text=True, env={**os.environ, "WIM_PROFILE": str(tmp / "resolve.json")})
+        self.assertEqual(0, r.returncode, r.stderr[-1500:])
+        (entry,) = json.loads((tmp / "stop" / "pairs.json").read_text())["pairs"].values()
+        self.assertEqual("onto master", entry["how"])
+
+
+class StaleConflicts(unittest.TestCase):
+    """A code conflict found branch to branch, where one PR no longer merges onto the base, joins a group and blocks its
+    partner by default; with "stale_conflicts": "apart" it is shown on both cards and does neither."""
+
+    def test_apart(self) -> None:
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        repo = tmp / "repo"
+        repo.mkdir()
+        git(repo, "init", "-q", "-b", "master")
+        git(repo, "config", "user.email", "t@example.org")
+        git(repo, "config", "user.name", "t")
+        root = commit(repo, {"f.c": "1\n2\n3\n", "g.c": "a\nb\n"}, "base")
+        git(repo, "update-ref", "refs/remotes/origin/master", commit(repo, {"g.c": "a on master\nb\n"}, "master moves in g.c"))
+        pr(repo, 51, root, {"f.c": "1 from 51\n2\n3\n", "g.c": "a from 51\nb\n"})   # stale: conflicts with master in g.c
+        pr(repo, 52, "master", {"f.c": "1 from 52\n2\n3\n"})                         # fresh, and conflicts with 51 in f.c
+        prlist = tmp / "open-prs.txt"
+        prlist.write_text("51 master\n52 master\n")
+        g = tmp / "inputs"
+        (g / "issues").mkdir(parents=True)
+        heads = {n: git(repo, "rev-parse", f"refs/pr/{n}") for n in (51, 52)}
+        (g / "pr-meta.json").write_text(json.dumps([{"number": n, "title": f"PR {n}", "isDraft": False, "createdAt": "2026-10-01T00:00:00Z",
+                                                     "updatedAt": "2026-10-02T00:00:00Z", "author": {"login": f"a{n}"}, "labels": [],
+                                                     "baseRefName": "master"} for n in (51, 52)]))
+        (g / "pr-bodies.json").write_text(json.dumps([{"number": n, "body": "", "reviewDecision": None} for n in (51, 52)]))
+        (g / "pr-extra.json").write_text(json.dumps({n: {"head": heads[n], "additions": 1, "deletions": 0, "files": 1, "author_role": "CONTRIBUTOR",
+                                                         "comments": 0, "closing": [], "reviews": [], "ci": "SUCCESS"} for n in (51, 52)}))
+        (g / "mergers.json").write_text("{}")
+        out = {}
+        for mode in ("link", "apart"):
+            profile = tmp / f"{mode}.json"
+            profile.write_text(json.dumps({**PROFILE, "version_claims": None, "mechanical": "$^", "names": [], "name_paths": [], "stale_conflicts": mode}))
+            env = {**os.environ, "WIM_PROFILE": str(profile), "WIM_OFFLINE": "1"}
+            work = tmp / f"audit-{mode}"
+            r = subprocess.run([sys.executable, "-I", str(MOTION / "repo_audit.py"), str(repo), str(work), str(prlist)], capture_output=True, text=True, env=env)
+            self.assertEqual(0, r.returncode, r.stderr[-1500:])
+            r = subprocess.run([sys.executable, "-I", str(MOTION / "intent.py"), str(repo), str(work), str(g), str(MOTION / "page.html"), str(tmp / f"{mode}.html")],
+                               capture_output=True, text=True, env=env)
+            self.assertEqual(0, r.returncode, r.stderr[-1500:])
+            m = json.loads((work / "map.json").read_text())
+            out[mode] = ([c["kind"] for c in m["prs"]["52"]["conflicts"]], len(m["groups"]), m["prs"]["52"]["shortlist"])
+        self.assertEqual((["code"], 1, False), out["link"])
+        self.assertEqual((["after a rebase"], 0, True), out["apart"], "shown on the card, but #51 must rebase before it matters")
+
+
+class MergeUpFixture(unittest.TestCase):
+    """A release branch merged up into master after every change, as php-src's PHP-8.x are: its PRs take their diff from
+    their own branch, need a rebase only when they conflict with it, and carry a merge-up conflict when master differs."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.tmp = Path(tempfile.mkdtemp())
+        repo = cls.repo = cls.tmp / "repo"
+        repo.mkdir()
+        git(repo, "init", "-q", "-b", "master")
+        git(repo, "config", "user.email", "t@example.org")
+        git(repo, "config", "user.name", "t")
+        root = commit(repo, {"x.c": "a\nb\nc\n", "y.c": "one\ntwo\n", "s.stub.php": "<?php\nfunction a(): void {}\n"}, "base")
+        git(repo, "checkout", "-q", "-b", "R-1")
+        old_branch = git(repo, "rev-parse", "HEAD")
+        commit(repo, {"y.c": "one\nTWO on the branch\n"}, "fix on the branch")
+        git(repo, "checkout", "-q", "master")
+        git(repo, "merge", "-q", "--no-ff", "-m", "Merge branch 'R-1'", "R-1")       # merged up
+        commit(repo, {"x.c": "a\nB on master\nc\n"}, "master moves on")
+        git(repo, "checkout", "-q", "R-1")
+        branch_tip = commit(repo, {"w.c": "not merged up yet\n"}, "on the branch, not yet merged up")
+        git(repo, "checkout", "-q", "master")
+        git(repo, "update-ref", "refs/remotes/origin/master", git(repo, "rev-parse", "master"))
+        git(repo, "update-ref", "refs/remotes/origin/R-1", branch_tip)
+        pr(repo, 21, branch_tip, {"x.c": "a\nB fixed\nc\n"})                   # clean on R-1, conflicts on master
+        pr(repo, 22, old_branch, {"y.c": "one\nTWO from 22\n"})               # conflicts with R-1 itself
+        pr(repo, 23, "master", {"x.c": "a\nB on master\nC\n"})                # on master, clean
+        pr(repo, 24, branch_tip, {"z.c": "new\n"})                             # forked after w.c: its diff is z.c only
+        pr(repo, 25, "master", {"s.stub.php": "<?php\nfunction a(int $x): void {}\n"})   # edits a's signature
+        pr(repo, 26, "master", {"s.stub.php": "<?php\nfunction a(string $y): void {}\n"})  # edits it too: adds nothing
+        pr(repo, 27, "master", {"t.stub.php": "<?php\nfunction b(): void {}\n"})          # adds b
+        pr(repo, 28, "master", {"u.stub.php": "<?php\nfunction b(): int {}\n"})           # adds b as well
+        del root
+        cls.prlist = cls.tmp / "open-prs.txt"
+        cls.prlist.write_text("21 R-1\n22 R-1\n23 master\n24 R-1\n25 master\n26 master\n27 master\n28 master\n")
+        cls.profile = cls.tmp / "profile.json"
+        cls.names = [{"kind": "stub function", "where": {"suffix": ".stub.php"}, "pattern": r"^\s*function\s+(\w+)\s*\(", "added_only": True}]
+        cls.profile.write_text(json.dumps({**PROFILE, "version_claims": None, "mechanical": "$^", "names": cls.names, "name_paths": ["*.stub.php"],
+                                           "merge_up": ["R-1"]}))
+        cls.work = cls.tmp / "audit"
+        cls.findings = cls.audit(cls.profile, cls.work)
+
+    @classmethod
+    def audit(cls, profile: Path, work: Path) -> dict:
+        r = subprocess.run([sys.executable, "-I", str(MOTION / "repo_audit.py"), str(cls.repo), str(work), str(cls.prlist)],
+                           capture_output=True, text=True, env={**os.environ, "WIM_PROFILE": str(profile)})
+        if r.returncode:
+            raise AssertionError(r.stderr[-2000:])
+        return json.loads((work / "findings.json").read_text())
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def test_a_name_is_shared_only_when_both_add_it(self) -> None:
+        self.assertEqual([{"kind": "stub function", "name": "b", "prs": [27, 28]}], self.findings["shared_name"])
+        # without added_only, the two signature edits read as both adding a()
+        plain = self.tmp / "plain.json"
+        plain.write_text(json.dumps({**json.loads(self.profile.read_text()), "names": [{**self.names[0], "added_only": False}]}))
+        shared = {x["name"]: x["prs"] for x in self.audit(plain, self.tmp / "plain")["shared_name"]}
+        self.assertEqual({"a": [25, 26], "b": [27, 28]}, shared)
+
+    def test_its_diff_is_its_own_change(self) -> None:
+        prs = json.loads((self.work / "prs.json").read_text())
+        self.assertEqual(["z.c"], sorted(prs["24"]["files"]), "not the branch's commit master doesn't have yet")
+
+    def test_onto_its_branch_then_up_the_chain(self) -> None:
+        up = self.findings["merge_up"]
+        self.assertEqual([{"branch": "R-1", "conflicts": []}, {"branch": "master", "conflicts": ["x.c"]}], up["21"]["path"])
+        self.assertEqual(["y.c"], up["22"]["path"][0]["conflicts"])
+        self.assertNotIn("23", up, "a PR on master has no chain")
+        self.assertEqual([22], self.findings["summary"]["merge_up"]["conflict_with_own_base"])
+        self.assertEqual({"R-1": 1}, self.findings["summary"]["merge_up"]["pending_into_base"])
+
+    def test_rebase_means_its_own_branch(self) -> None:
+        g = self.tmp / "inputs"
+        (g / "issues").mkdir(parents=True, exist_ok=True)
+        numbers, bases = [21, 22, 23, 24, 25, 26, 27, 28], {21: "R-1", 22: "R-1", 23: "master", 24: "R-1", 25: "master", 26: "master", 27: "master", 28: "master"}
+        heads = {n: git(self.repo, "rev-parse", f"refs/pr/{n}") for n in numbers}
+        (g / "pr-meta.json").write_text(json.dumps([{"number": n, "title": f"PR {n}", "isDraft": False, "createdAt": "2026-10-01T00:00:00Z",
+                                                     "updatedAt": "2026-10-02T00:00:00Z", "author": {"login": f"a{n}"}, "labels": [],
+                                                     "baseRefName": bases[n]} for n in numbers]))
+        (g / "pr-bodies.json").write_text(json.dumps([{"number": n, "body": "", "reviewDecision": None} for n in numbers]))
+        (g / "pr-extra.json").write_text(json.dumps({n: {"head": heads[n], "additions": 1, "deletions": 0, "files": 1, "author_role": "CONTRIBUTOR",
+                                                         "comments": 0, "closing": [], "reviews": [], "ci": "SUCCESS"} for n in numbers}))
+        (g / "mergers.json").write_text("{}")
+        r = subprocess.run([sys.executable, "-I", str(MOTION / "intent.py"), str(self.repo), str(self.work), str(g),
+                            str(MOTION / "page.html"), str(self.tmp / "page.html")],
+                           capture_output=True, text=True, env={**os.environ, "WIM_PROFILE": str(self.profile), "WIM_OFFLINE": "1"})
+        self.assertEqual(0, r.returncode, r.stderr[-1500:])
+        out = json.loads((self.work / "map.json").read_text())["prs"]
+        self.assertEqual((False, True, False), (out["21"]["rebase"], out["22"]["rebase"], out["23"]["rebase"]))
+        self.assertEqual([{"branch": "master", "conflicts": ["x.c"]}], out["21"]["merge_up"])
+        self.assertEqual(("R-1", "master"), (out["21"]["base"], out["23"]["base"]))
+        page = (self.tmp / "page.html").read_text()
+        self.assertIn("merge onto their own branch", page)
 
 
 class CheckPage(unittest.TestCase):

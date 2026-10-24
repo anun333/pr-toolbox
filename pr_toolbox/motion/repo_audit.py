@@ -37,9 +37,15 @@ from pr_toolbox.common import caps_mismatches, conflicted_files, merged, version
 P = json.loads(Path(os.environ["WIM_PROFILE"]).read_text())
 
 REPO, W = Path(sys.argv[1]), Path(sys.argv[2])
-NUMBERS = [int(l.split()[0]) for l in Path(sys.argv[3]).read_text().split("\n") if l.strip()]
+LIST = [l.split() for l in Path(sys.argv[3]).read_text().split("\n") if l.strip()]
+NUMBERS = [int(x[0]) for x in LIST]
 MASS = P["mass_files"]
 MASTER = os.environ.get("WIM_MASTER") or f"{P['remote']}/{P['base_branch']}"  # WIM_MASTER pins a master, e.g. to replay a build
+# Release branches merged up into the base after every change, oldest first (the profile's merge_up). A PR aimed at one
+# takes its diff from that branch, merges onto it, and is merged up the chain; the comparisons with other PRs happen
+# on master, where every branch's work ends up.
+MERGE_UP = P.get("merge_up") or []
+BASE_OF = {int(x[0]): (x[1] if len(x) > 1 and x[1] in MERGE_UP else None) for x in LIST}
 MECHANICAL = re.compile(P["mechanical"])
 W.mkdir(parents=True, exist_ok=True)
 (W / "blobs").mkdir(exist_ok=True)
@@ -99,20 +105,21 @@ NAME_PATHS = P["name_paths"]
 STREAMS = P["streams"]
 DIRECTION = [d for s in STREAMS["streams"] for d in s.get("direction", [])]
 
-# --- 1. Each PR's changes, against its merge base with master; cached by the PR's head commit -------------
+# --- 1. Each PR's changes, against its merge base with master (or with its release branch); cached by the PR's head --
 prs = {}
 cache = W / "prs.json"
 if cache.exists():
     prs = {int(k): v for k, v in json.loads(cache.read_text()).items()}
 HEADS = {n: git("rev-parse", f"refs/pr/{n}").stdout.strip() for n in NUMBERS}
-BASES = {n: git("merge-base", MASTER, f"refs/pr/{n}").stdout.strip() for n in NUMBERS}
+UP_TIP = {b: git("rev-parse", f"{P['remote']}/{b}").stdout.strip() for b in MERGE_UP}
+BASES = {n: git("merge-base", UP_TIP[BASE_OF[n]] if BASE_OF[n] else MASTER, f"refs/pr/{n}").stdout.strip() for n in NUMBERS}
 prs = {n: e for n, e in prs.items() if n in HEADS and e.get("head") == HEADS[n] and e.get("base") == BASES[n]
-       and e.get("direction_v") == len(DIRECTION)}
+       and e.get("direction_v") == len(DIRECTION) and "name_removed" in e}
 for n in NUMBERS:
     if n in prs:
         continue
     head = f"refs/pr/{n}"
-    base = git("merge-base", MASTER, head).stdout.strip()
+    base = BASES[n]
     status = git("diff", "--name-status", "-M", base, head).stdout.splitlines()
     files = {}
     for line in status:
@@ -143,14 +150,18 @@ for n in NUMBERS:
             elif l.startswith("+") and current:
                 entry["added_by_file"].setdefault(current, []).append(l[1:])
         entry["added_by_file"] = {p: "\n".join(ls) for p, ls in entry["added_by_file"].items()}
-    # added lines where shared names live (every PR: the largest ones add tables and routes too)
-    current = None
+    # added lines where shared names live (every PR: the largest ones add tables and routes too), and removed ones, so a
+    # kind marked added_only can tell a name the PR adds from one whose line it only edits
+    current, entry["name_removed"] = None, {}
     for l in git("diff", "-U0", base, head, "--", *NAME_PATHS).stdout.splitlines():
-        if l.startswith("+++ "):
-            current = l[6:] if l.startswith("+++ b/") else None
+        if l.startswith(("+++ ", "--- ")):
+            current = l[6:] if l.startswith("+++ b/") else None if l.startswith("+++ ") else current
         elif l.startswith("+") and current:
             entry["name_lines"].setdefault(current, []).append(l[1:])
+        elif l.startswith("-") and current:
+            entry["name_removed"].setdefault(current, []).append(l[1:])
     entry["name_lines"] = {p: "\n".join(ls) for p, ls in entry["name_lines"].items()}
+    entry["name_removed"] = {p: "\n".join(ls) for p, ls in entry["name_removed"].items()}
     # what the PR adds and removes of each pattern the plan retires (tests and baselines aside)
     added, removed = [], []
     for l in git("diff", "-U0", base, head, "--", *(P.get("diff_files") or P["code_files"])).stdout.splitlines():
@@ -341,12 +352,33 @@ moved = set() if prev_master == MASTER_SHA else None  # files master changed sin
 if prev_master and prev_master != MASTER_SHA and alive(prev_master) \
         and subprocess.run(["git", "-C", str(REPO), "merge-base", "--is-ancestor", prev_master, MASTER_SHA]).returncode == 0:
     moved = set(git("diff", "--name-only", "--no-renames", prev_master, MASTER_SHA).stdout.split())
+MODE = P.get("mechanical_conflicts") or "stop"  # results merged under another mode are merged again
+if onmaster.get("mode", "stop") != MODE:
+    moved = None
 if moved is None:
     onmaster = {"master": MASTER_SHA, "prs": {}}
 pr_paths = {n: set(prs[n]["files"]) | {f["old"] for f in prs[n]["files"].values()} for n in normal}
 touches_moved = lambda *ns: bool(moved) and any(pr_paths[n] & moved for n in ns)
 INCREMENTAL = {"master_from": prev_master, "master_to": MASTER_SHA, "files_changed_on_master": None if moved is None else len(moved),
                "prs_merged_again": 0, "prs_reused": 0, "pairs_merged_again": 0, "pairs_reused": 0, "rechecks": 0, "rule_violations": []}
+RESOLVE_MECH = P.get("mechanical_conflicts") == "resolve"
+
+
+def onto_master(n):
+    """PR n merged onto master: (commit, conflicted files). With the profile's "mechanical_conflicts": "resolve", a PR
+    whose every conflict is in a mechanical file still gets a commit, taking master's side of those hunks (-X ours), so
+    its pairs are merged on master like anyone else's instead of branch to branch. On php-src a NEWS line conflicts with
+    the branch after nearly every fix: that needs a rebase, not a decision, and the PR's pairs are about its code."""
+    commit, files = merged(REPO, MASTER_SHA, f"refs/pr/{n}")
+    if commit is None and RESOLVE_MECH and files and all(MECHANICAL.match(f) for f in files):
+        r = git("merge-tree", "--write-tree", "-X", "ours", MASTER_SHA, f"refs/pr/{n}")
+        lines = r.stdout.strip().splitlines()
+        if r.returncode == 0 and lines:
+            commit = git("commit-tree", lines[0], "-p", MASTER_SHA, "-p", f"refs/pr/{n}", "-m",
+                         "pr-toolbox probe, mechanical files as master has them").stdout.strip()
+    return commit, files
+
+
 entries, todo = {}, []
 for n in normal:
     key = f"{n}:{HEADS[n]}"
@@ -359,17 +391,17 @@ for n in normal:
     else:
         INCREMENTAL["prs_reused"] += 1
         entries[key] = e
-for n, (commit, files) in zip(todo, pmap(lambda n: merged(REPO, MASTER_SHA, f"refs/pr/{n}"), todo)):
+for n, (commit, files) in zip(todo, pmap(onto_master, todo)):
     entries[f"{n}:{HEADS[n]}"] = {"commit": commit, "conflicts": files, "master": MASTER_SHA}
     INCREMENTAL["prs_merged_again"] += 1
-onmaster = {"master": MASTER_SHA, "prs": entries}
+onmaster = {"master": MASTER_SHA, "mode": MODE, "prs": entries}
 
 
 def refresh(ns):
     """Re-merge, in parallel, every result in ns reused from an earlier master, checking each agrees."""
     stale = [n for n in sorted(ns) if onmaster["prs"][f"{n}:{HEADS[n]}"]["master"] != MASTER_SHA
              or not alive(onmaster["prs"][f"{n}:{HEADS[n]}"]["commit"])]
-    for n, (commit, files) in zip(stale, pmap(lambda n: merged(REPO, MASTER_SHA, f"refs/pr/{n}"), stale)):
+    for n, (commit, files) in zip(stale, pmap(onto_master, stale)):
         e = onmaster["prs"][f"{n}:{HEADS[n]}"]
         INCREMENTAL["rechecks"] += 1
         if sorted(files) != sorted(e["conflicts"]):
@@ -378,8 +410,34 @@ def refresh(ns):
 
 
 mark("each PR onto the base")
-onto = {n: onmaster["prs"][f"{n}:{HEADS[n]}"]["commit"] for n in normal}  # truthy when it merged cleanly
+onto = {n: onmaster["prs"][f"{n}:{HEADS[n]}"]["commit"] for n in normal}  # truthy when its pairs can be merged on master
 mconf = {n: set(onmaster["prs"][f"{n}:{HEADS[n]}"]["conflicts"]) for n in normal}
+clean = {n: bool(onto[n]) and not mconf[n] for n in normal}  # merged with no conflict at all, mechanical files included
+
+
+# --- 3b. A PR aimed at a release branch: onto that branch, then up the chain; the merge onto master above is the last
+# step. Merging a branch up carries every change on it, so a PR that merges onto its own branch but not onto a later
+# one leaves whoever merges up a conflict to resolve there: work, but not a reason to rebase. Cached by the PR's head
+# and each branch's tip.
+def conflicts_onto(rev, ref):
+    r = git("merge-tree", "--write-tree", "--name-only", rev, ref)
+    return conflicted_files(r.stdout.strip().splitlines()[1:]) if r.returncode == 1 else []
+
+
+up_cache_f = W / "merge-up.json"
+up_cache = json.loads(up_cache_f.read_text()) if up_cache_f.exists() else {}
+up_jobs = [(n, b) for n in normal if BASE_OF[n] for b in MERGE_UP[MERGE_UP.index(BASE_OF[n]):]]
+up_key = lambda n, b: f"{n}:{HEADS[n]}:{UP_TIP[b]}"
+up_todo = [(n, b) for n, b in up_jobs if up_key(n, b) not in up_cache]
+for (n, b), files in zip(up_todo, pmap(lambda t: conflicts_onto(UP_TIP[t[1]], f"refs/pr/{t[0]}"), up_todo)):
+    up_cache[up_key(n, b)] = files
+up_cache = {up_key(n, b): up_cache[up_key(n, b)] for n, b in up_jobs}
+up_cache_f.write_text(json.dumps(up_cache))
+merge_up = {n: {"base": BASE_OF[n], "path": [{"branch": b, "conflicts": up_cache[up_key(n, b)]} for b in MERGE_UP[MERGE_UP.index(BASE_OF[n]):]]
+                + [{"branch": P["base_branch"], "conflicts": sorted(mconf[n])}]} for n in normal if BASE_OF[n]}
+# commits on each branch that master doesn't have yet: while there are any, a PR's merge onto master carries them too
+UP_PENDING = {b: int(git("rev-list", "--count", f"{MASTER_SHA}..{UP_TIP[b]}").stdout.strip() or 0) for b in MERGE_UP}
+mark("merge-up")
 
 findings = {"text_conflict": [], "stacked": [], "deleted_changed": [], "same_method": [], "removed_used": [],
             "removed_vs_master": [], "signature": [], "signature_vs_master": [], "shared_name": [],
@@ -408,7 +466,7 @@ for n in normal:
 share = {(a, b) for ns in by_file.values() for a, b in combinations(sorted(ns), 2)}
 pair_cache = W / "pairs.json"
 pairs = json.loads(pair_cache.read_text()) if pair_cache.exists() else {}
-pairs = pairs if pairs.get("master") == MASTER_SHA or moved is not None else {"master": MASTER_SHA, "pairs": {}}
+pairs = pairs if (pairs.get("master") == MASTER_SHA or moved is not None) and pairs.get("mode", "stop") == MODE else {"master": MASTER_SHA, "pairs": {}}
 fresh = {}
 
 
@@ -442,7 +500,7 @@ for a, b in sorted(share):
         todo_pairs.append((a, b, key))
 
 # every commit the caps checks and pair merges start from must be today's master's: re-merge stale ones once
-caps_prs = sorted(n for n in touches_caps if onto[n])
+caps_prs = sorted(n for n in touches_caps if clean[n])
 refresh(set(caps_prs) | {a for a, b, _ in todo_pairs if onto[a] and onto[b]})
 commit_of = lambda n: onmaster["prs"][f"{n}:{HEADS[n]}"]["commit"]
 for n, bad in zip(caps_prs, pmap(lambda n: sorted(caps(commit_of(n)) - MASTER_CAPS), caps_prs)):
@@ -456,7 +514,7 @@ def pair_entry(t):
     if onto[a] and onto[b]:
         commit, files = merged(REPO, commit_of(a), f"refs/pr/{b}")
         entry = {"how": "onto master", "files": files, "master": MASTER_SHA}
-        if commit and a in touches_caps and b in touches_caps:
+        if commit and a in touches_caps and b in touches_caps and clean[a] and clean[b]:
             alone = set(findings["caps_alone"].get(a, [])) | set(findings["caps_alone"].get(b, []))
             entry["caps"] = sorted(caps(commit) - MASTER_CAPS - alone)
         return entry
@@ -471,7 +529,7 @@ for (a, b, key), entry in zip(todo_pairs, pmap(pair_entry, todo_pairs)):
     INCREMENTAL["pairs_merged_again"] += 1
 fresh = dict(sorted(fresh.items()))
 pairs["pairs"] = fresh
-pairs["master"] = MASTER_SHA
+pairs["master"], pairs["mode"] = MASTER_SHA, MODE
 pair_cache.write_text(json.dumps(pairs))
 onmaster_cache.write_text(json.dumps(onmaster))
 for key, v in sorted(pairs["pairs"].items()):
@@ -510,6 +568,21 @@ if UF:
         if stale:
             findings["stale_upgrade"]["prs"][n] = stale
 conflicts = {tuple(int(x.split(":")[0]) for x in k.split(",")): v for k, v in pairs["pairs"].items()}
+
+
+def their_files(a, b, v):
+    """A pair's conflicted files that are the two PRs' work. Merged onto master, that is every one. Merged branch to
+    branch, the heads also carry the history between their bases, and where both sides of that history changed a file
+    neither PR touches, git conflicts there too: php-src #7173 (on master, last rebased 2023-11) against #24188 (on
+    PHP-8.2) conflicted in 95 files, CI configuration among them, that neither changes. A conflict about their work is in
+    a file both change."""
+    if v["how"] == "onto master":
+        return v["files"]
+    both = pr_paths[a] & pr_paths[b]
+    return [f for f in v["files"] if f in both]
+
+
+conflicts = {(a, b): {**v, "files": their_files(a, b, v)} for (a, b), v in conflicts.items()}
 
 for (a, b), v in sorted(conflicts.items()):
     if v["files"]:
@@ -739,13 +812,22 @@ def name_kind(spec):
 
 
 KINDS = {spec["kind"]: name_kind(spec) for spec in P.get("names", [])}
+# a kind marked added_only counts a name only when the PR doesn't also remove it: editing a stub's signature or an
+# opcode's handler line rewrites its name without adding one
+ADDED_ONLY = {spec["kind"] for spec in P.get("names", []) if spec.get("added_only")}
 names = defaultdict(lambda: defaultdict(set))
 for n in NUMBERS:
+    gone = defaultdict(set)
+    for path, text in prs[n].get("name_removed", {}).items() if ADDED_ONLY else ():
+        for line in text.splitlines():
+            for kind in ADDED_ONLY:
+                gone[kind].update(KINDS[kind](path, line))
     for path, text in prs[n]["name_lines"].items():
         for line in text.splitlines():
             for kind, fn in KINDS.items():
                 for v in fn(path, line):
-                    names[kind][v].add(n)
+                    if v not in gone[kind]:
+                        names[kind][v].add(n)
 for kind, vs in names.items():
     for v, ns in vs.items():
         if len(ns) > 1:
@@ -764,8 +846,13 @@ for n in normal:
 
 mark("in motion")
 summary = {"master": MASTER_SHA, "open_prs": len(NUMBERS), "mass": {n: len(prs[n]["files"]) for n in mass},
-           "conflict_with_master": sorted(n for n in normal if not onto[n]), "pairs_sharing_a_file": len(share),
+           "conflict_with_master": sorted(n for n in normal if not clean[n]), "pairs_sharing_a_file": len(share),
            "counts": {k: len(v) for k, v in findings.items()}, "incremental": INCREMENTAL, "seconds": SECONDS}
+if MERGE_UP:
+    summary["merge_up"] = {"branches": UP_TIP, "pending_into_base": UP_PENDING, "prs": len(merge_up),
+                           "conflict_with_own_base": sorted(n for n, m in merge_up.items() if m["path"][0]["conflicts"])}
 (W / "findings.json").write_text(json.dumps({"summary": summary, **findings, "motion": motion,
-                                             "master_conflicts": {n: sorted(mconf[n]) for n in normal if mconf[n]}}, indent=1))
-print(json.dumps({**summary, "conflict_with_master": len(summary["conflict_with_master"])}, indent=1))
+                                             "master_conflicts": {n: sorted(mconf[n]) for n in normal if mconf[n]},
+                                             **({"merge_up": merge_up} if MERGE_UP else {})}, indent=1))
+print(json.dumps({**summary, "conflict_with_master": len(summary["conflict_with_master"]),
+                  **({"merge_up": {**summary["merge_up"], "conflict_with_own_base": len(summary["merge_up"]["conflict_with_own_base"])}} if MERGE_UP else {})}, indent=1))

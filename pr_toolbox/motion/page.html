@@ -242,7 +242,7 @@ table.triage td.t .by { color: var(--muted); font-size: 0.82rem; }
 
   <section class="band" id="triage">
     <div class="band-head"><span class="eyebrow">Triage</span><h2>Every open PR, filtered by what a merge needs</h2>
-      <p class="muted">Combine filters to narrow the list. "Nothing blocking" keeps PRs that are out of draft, merge onto %%BASE%%, pass CI, conflict with no other PR's code, break nothing these checks can see, add nothing the plan is retiring, keep the version number and caps whole, and have no changes requested by a maintainer. It is not a review: whether a PR is right is still a reviewer's call. Select a row for its full card.</p></div>
+      <p class="muted">Combine filters to narrow the list. "Nothing blocking" keeps PRs that are out of draft, merge onto %%ONTO%%, pass CI, conflict with no other PR's code, break nothing these checks can see, add nothing the plan is retiring, keep the version number and caps whole, and have no changes requested by a maintainer. It is not a review: whether a PR is right is still a reviewer's call. Select a row for its full card.</p></div>
     <div class="panel">
       <div class="row" id="presets"></div>
       <div class="filters" id="filters" role="group" aria-label="Filters"></div>
@@ -316,6 +316,9 @@ const isLink = (n) => `<a class="mono" href="${GH}issues/${n}">#${n}</a>`;
 const linkNums = (s) => esc(s).replace(/#(\d{3,5})\b/g, (m, n) => `<a class="mono" href="${GH}issues/${n}">#${n}</a>`);
 const pr = (n) => MAP.prs[String(n)];
 const draft = (n) => (pr(n) && pr(n).draft ? ' <span class="pill draft">draft</span>' : "");
+/* a PR aimed at a release branch the profile merges up into the base: named beside its title */
+const UP = (PF.merge_up || []).length > 0, ONTO = UP ? "its branch" : BASE;
+const branchOf = (p) => (p.base && p.base !== BASE ? ` <span class="pill info mono">${esc(p.base)}</span>` : "");
 const prLine = (n, extra = "") => {
   const p = pr(n);
   if (!p) return `<li class="prline"><span class="num">${prLink(n)}</span><span>${extra}</span></li>`;
@@ -412,9 +415,10 @@ function renderTwice() {
 function renderMerge() {
   const m = MAP.merge, tested = MAP.stamp.open_prs - Object.keys(MAP.stamp.mass).length;
   $("#merge-stats").innerHTML = [
-    [m.needs_rebase, `of ${tested} PRs tested no longer merge onto ${BASE}${tested < MAP.stamp.open_prs ? ` (the ${MAP.stamp.open_prs - tested} over ${MASS} files are listed apart)` : ""}`, "conflict"],
+    [m.needs_rebase, `of ${tested} PRs tested no longer merge onto ${UP ? "their own branch" : BASE}${tested < MAP.stamp.open_prs ? ` (the ${MAP.stamp.open_prs - tested} over ${MASS} files are listed apart)` : ""}`, "conflict"],
     [m.needs_rebase_mechanical_only, "of those conflict only in mechanical files", "mech"],
     [m.conflict_pairs_code, `pairs conflict in code, of ${m.pairs_sharing_a_file.toLocaleString()} that share a file`, "conflict"],
+    ...(m.conflict_pairs_after_rebase != null ? [[m.conflict_pairs_after_rebase, `pairs conflict in code only merged head to head, where one of the two doesn't merge onto ${BASE} as it stands`, "mech"]] : []),
     [m.conflict_pairs_mechanical, "pairs conflict only in mechanical files", "mech"],
   ].map(([n, label, k]) => `<div class="stat"><span class="big" style="color:var(--${k})">${n}</span><span class="muted">${esc(label)}</span></div>`).join("");
   const impact = m.impact.map((x) => `<li class="prline"><span class="num">${prLink(x.n)}</span><span>${esc(pr(x.n)?.t || "")}${draft(x.n)}<div class="muted" style="font-size:.85rem">${x.code_conflicts.length} code conflicts: ${x.code_conflicts.map(prLink).join(" ")}</div></span></li>`).join("");
@@ -554,10 +558,11 @@ function renderReleases() {
 function renderMethod() {
   $("#method-body").innerHTML = `<div class="panel"><h3>How</h3><ul class="plain">
     <li>Every open PR's head was fetched and merged onto ${esc(BASE)} ${esc(MAP.stamp.master)} in memory with <code>git merge-tree --write-tree</code>; each pair that shares a file was merged on top of the first. A PR that no longer merges onto master was compared branch to branch, leaving out the files it conflicts on with master.</li>
+    ${UP ? `<li>${(PF.merge_up || []).map((b) => `<code>${esc(b)}</code>`).join(", ")} are merged up into ${esc(BASE)} after every change, so a PR aimed at one of them ends up on ${esc(BASE)} too. Its diff is taken from its own branch; it needs a rebase when it conflicts with that branch, and a conflict on a later branch in the chain is shown on its card as a merge-up conflict, for whoever merges up to resolve. Pairs are compared on ${esc(BASE)}, where both PRs end up.${MAP.merge_up ? ` Commits on those branches not yet merged up when this was built: ${Object.entries(MAP.merge_up.pending_into_base).map(([b, k]) => `${esc(b)} ${k}`).join(", ")}${Object.values(MAP.merge_up.pending_into_base).some((k) => k) ? "; until they are, a PR's merge onto " + esc(BASE) + " carries them" : ""}.` : ""}</li>` : ""}
     ${PF.symbols === "php" ? `<li>PHP files were read by PHP's own tokenizer for classes, methods and signatures. Signature breaks compare the new parent signature with each override in another PR, or on ${esc(BASE)} in a file the PR doesn't update.</li>` : `<li>No symbol reader for this project's language, so the checks for signatures, removed names and same methods were skipped.</li>`}
     <li>Names (routes, tables, columns, lists, settings, menu ids, events) were read from each PR's added lines.</li>
     <li>CI is each PR's head commit's checks${PF.ci_ignore ? `, leaving out those matching <code>${esc(PF.ci_ignore)}</code>` : ""}; a cancelled run is not a failure.</li>
-    <li>Release counts were taken from each tag's tree. Plan issues, labels, CI states, reviews and the issues each PR closes come from GitHub on the build date. A maintainer review means one from someone who merged a PR in the past year (${MAP.maintainers.map((m) => `${esc(m.login)} ${m.merged}`).join(", ")}) or a member of the ${esc(PF.project || "project")} organisation, other than the PR's author; automated reviewers are counted apart.</li>
+    <li>Release counts were taken from each tag's tree. Plan issues, labels, CI states, reviews and the issues each PR closes come from GitHub on the build date. A maintainer review means one from someone who ${PF.landings === "merge+commit" ? "landed a PR in the past year, by merging it or by pushing the commit that closed it" : "merged a PR in the past year"} (${MAP.maintainers.map((m) => `${esc(m.login)} ${m.merged}`).join(", ")}) or a member of the ${esc(PF.project || "project")} organisation, other than the PR's author; automated reviewers are counted apart.</li>
     ${Object.keys(MAP.direction_labels || {}).length ? `<li>"Fit with the plan" counts, in each PR's added and removed lines (tests and baselines aside), the patterns the plan retires: ${Object.values(MAP.direction_labels).map((d) => esc(d.label)).join(", ")}.</li>` : ""}
     <li>The path forward cuts each plan's remaining work the way the plan says: folders for a plan worked folder by folder, unticked items for a tracker issue (reach counted as the files that call what each item defines, or include it by name), and plan issues as single items. An item is in flight when an open PR cites its issue; a file is busy when an open PR changes it.</li>
     <li>Built by <a href="https://github.com/anun333/pr-toolbox">pr-toolbox</a> <code>motion</code>${PF.tool_version ? ` ${esc(PF.tool_version)}` : ""} with the project's profile; <a href="#rebuild">rebuild it yourself</a> from the same commits or from today's.</li>
@@ -789,10 +794,11 @@ function prCard(n, p) {
   const others = p.reviews.filter((r) => !r.bot && !(p.maint && r.by === p.maint_by) && r.by !== p.by);
   const bots = p.reviews.filter((r) => r.bot).length;
   const dir = Object.entries(p.dir);
-  const code = p.conflicts.filter((c) => c.kind === "code"), mech = p.conflicts.filter((c) => c.kind !== "code");
+  const code = p.conflicts.filter((c) => c.kind === "code"), mech = p.conflicts.filter((c) => c.kind === "mechanical");
+  const later = p.conflicts.filter((c) => c.kind === "after a rebase");
   const breaks = p.interacts.filter((i) => isBreak(i.what)), near = p.interacts.filter((i) => !isBreak(i.what));
   const li = (html) => `<li>${html}</li>`;
-  return `<h3>${prLink(n)} ${esc(p.t)}${draft(n)}</h3>
+  return `<h3>${prLink(n)} ${esc(p.t)}${draft(n)}${branchOf(p)}</h3>
   <p class="muted mono" style="font-size:.8rem">Computed on this PR's head <a href="${GH}commit/${esc(p.head)}">${esc(p.head.slice(0, 10))}</a> and ${esc(BASE)} <a href="${GH}commit/${esc(MAP.stamp.master_full)}">${esc(MAP.stamp.master)}</a>, ${esc(MAP.stamp.generated)}. If either has moved, rebuild before relying on this card.</p>
   <p class="muted">${esc(p.by)}${p.role ? ` (${esc(p.role.toLowerCase().replace("_", " "))})` : ""} · opened ${esc(p.created)}, ${p.age} days ago · updated ${esc(p.updated)}${p.fixes.length ? ` · fixes ${p.fixes.map(isLink).join(", ")}` : ""}${areas ? ` · ${areas}` : ""}</p>
   <div class="card">
@@ -805,9 +811,11 @@ function prCard(n, p) {
     <div class="panel"><h4>Fit with the plan</h4>${dir.length ? `<ul class="plain">${dir.map(([k, [a, r]]) => li(`${a > r ? '<span class="pill conflict">adds</span>' : r > a ? '<span class="pill ok">removes</span>' : '<span class="pill info">moves</span>'} ${esc(dirLabel(k))}: <span class="mono">+${a} −${r}</span> <a href="#area-${esc(MAP.direction_labels[k]?.stream || "")}">plan</a>`)).join("")}</ul>` : '<p class="muted">Adds or removes none of the patterns the plan retires.</p>'}</div>
     ${CONF ? `<div class="panel"><h4>Standards</h4>${(p.conf || []).length ? `<ul class="plain">${p.conf.map((id) => CONF_BY_ID[id]).filter(Boolean).map((s) => li(`<a href="#conf-${esc(s.id)}">${esc(s.label)}</a> ${esc(s.title)} ${s.certified ? '<span class="pill ok">certified</span>' : ""}${s.tool && !s.tool.before_merge ? ' <span class="pill mech">official test not run before merge</span>' : ""}${s.security ? ' <span class="pill mech">security review</span>' : ""} ${rulePill(s.hti5)}`)).join("")}</ul>` : '<p class="muted">Touches none of the listed standards.</p>'}</div>` : ""}
     <div class="panel"><h4>Merging it</h4><ul class="plain">
-      ${li(`${ontoCell(p)} onto ${esc(BASE)}${p.rebase && p.rebase_files.length ? ` <span class="muted mono" style="font-size:.8rem">${esc(p.rebase_files.join(", "))}</span>` : ""}`)}
+      ${li(`${ontoCell(p)} onto ${esc(p.base || BASE)}${p.rebase && p.rebase_files.length ? ` <span class="muted mono" style="font-size:.8rem">${esc(p.rebase_files.join(", "))}</span>` : ""}`)}
+      ${(p.merge_up || []).map((u) => li(`<span class="pill mech">merge-up conflict</span> into <code>${esc(u.branch)}</code> <span class="muted mono" style="font-size:.8rem">${esc(u.conflicts.join(", "))}</span>`)).join("")}
       ${li(code.length ? `<span class="pill conflict">code conflicts</span> with ${code.map((c) => `${prLink(c.n)} <span class="muted mono" style="font-size:.78rem">${esc(c.files.slice(0, 2).join(", "))}</span>`).join(", ")}` : '<span class="muted">no code conflicts with other open PRs</span>')}
       ${mech.length ? li(`<span class="pill mech">mechanical</span> with ${mech.map((c) => prLink(c.n)).join(" ")}`) : ""}
+      ${later.length ? li(`<span class="pill mech">after a rebase</span> code conflicts with ${later.map((c) => `${prLink(c.n)} <span class="muted mono" style="font-size:.78rem">${esc(c.files.slice(0, 2).join(", "))}</span>`).join(", ")} <span class="muted">(merged head to head, since one of each pair doesn't merge onto ${esc(BASE)} as it stands; these neither group nor block)</span>`) : ""}
       ${li(`${esc(VN)}: ${versionCell(p)}${realShared(p).length ? ` also claimed by ${realShared(p).map(prLink).join(", ")}` : ""}${stackShared(p).length ? ` <span class="muted">(the same bump as ${stackShared(p).map(prLink).join(", ")}, stacked with it)</span>` : ""}${p.claim_taken ? ` (${esc(BASE)} already uses it)` : ""}${p.no_bump ? " (changes the upgrade SQL without changing it)" : ""}`)}
       ${(p.stale_sql || []).length ? li(`<span class="pill mech">earlier release's upgrade file</span> it changes ${p.stale_sql.map((f) => `<code>${esc(f)}</code>`).join(", ")}: only sites upgrading from before that release run it. Intended for a fix to the old upgrade path; a change current sites need also belongs in <code>${esc(MAP.merge.stale_upgrade.current)}</code>`) : ""}
       ${p.caps_alone.length ? li(`<span class="pill conflict">caps</span> merged alone: ${esc(p.caps_alone.join("; "))}`) : ""}
@@ -838,7 +846,7 @@ function checkCommands(n, p, code) {
 
 const FILTERS = [
   ["ready", "Out of draft", (p) => !p.draft],
-  ["merges", `Merges onto ${BASE}`, (p) => !p.rebase && !p.mass],
+  ["merges", `Merges onto ${ONTO}`, (p) => !p.rebase && !p.mass],
   ["ci", "CI passing", (p) => p.ci === "SUCCESS"],
   ["noconf", "No code conflicts", (p) => codeConf(p) === 0],
   ["nobreak", "Breaks nothing", (p) => p.breaks === 0],
@@ -859,7 +867,7 @@ const PRESETS = [
   ["Clear filters", [], "updated"],
 ];
 const COLS = [
-  ["n", "PR"], ["t", "Title"], ["age", "Age"], ["ci", "CI"], ["maint", "Maintainer"], ["onto", BASE[0].toUpperCase() + BASE.slice(1)],
+  ["n", "PR"], ["t", "Title"], ["age", "Age"], ["ci", "CI"], ["maint", "Maintainer"], ["onto", UP ? "Onto its branch" : BASE[0].toUpperCase() + BASE.slice(1)],
   ["conf", "Code conflicts"], ["breaks", "Breaks"], ["plan", "Plan"], ["v", VN], ["size", "Size"], ["tests", "Tests"],
 ];
 /* every column sorts. Each sort: a key, the direction a first click gives, and how to say each direction.
@@ -868,7 +876,7 @@ const CI_RANK = { FAILURE: 0, ERROR: 0, PENDING: 1, EXPECTED: 1, SUCCESS: 2 };
 const REVIEW_RANK = { CHANGES_REQUESTED: 0, "": 1, COMMENTED: 2, DISMISSED: 2, APPROVED: 3 };
 const SORTS = {
   n: [(p) => p.n, "desc", ["lowest number first", "newest number first"]],
-  t: [(p) => p.t.toLowerCase(), "asc", ["title A to Z", "title Z to A"]],
+  t: [(p) => p.t.trim().toLowerCase(), "asc", ["title A to Z", "title Z to A"]],  /* as shown: HTML drops a title's leading space */
   age: [(p) => p.age, "desc", ["newest first", "oldest first"]],
   updated: [(p) => p.updated, "desc", ["least recently updated first", "most recently updated first"]],
   ci: [(p) => CI_RANK[p.ci] ?? 3, "asc", ["failing CI first", "passing CI first"]],
@@ -918,7 +926,7 @@ function drawTriage() {
   $("#tcount").textContent = `${rows.length} of ${Object.keys(MAP.prs).length} open PRs · sorted ${says[tstate.dir === "asc" ? 0 : 1]}`;
   const head = `<thead><tr>${COLS.map(([k, label]) => { const on = tstate.sort === k;
     return `<th class="${["age", "conf", "breaks", "size", "tests"].includes(k) ? "n" : ""}" aria-sort="${on ? (tstate.dir === "asc" ? "ascending" : "descending") : "none"}"><button type="button" data-sort="${k}" title="Sort: ${esc(SORTS[k][2][SORTS[k][1] === "asc" ? 0 : 1])}; again to reverse">${esc(label)}<span class="sort${on ? " on" : ""}">${on ? (tstate.dir === "asc" ? "▲" : "▼") : "⇅"}</span></button></th>`; }).join("")}</tr></thead>`;
-  const body = (tstate.all ? rows : rows.slice(0, TRIAGE_ROWS)).map(([n, p]) => `<tr data-n="${n}"><td>${prLink(n)}</td><td class="t">${esc(p.t)}${draft(n)}<div class="by">${esc(p.by)} · ${esc(p.updated)}</div></td>
+  const body = (tstate.all ? rows : rows.slice(0, TRIAGE_ROWS)).map(([n, p]) => `<tr data-n="${n}"><td>${prLink(n)}</td><td class="t">${esc(p.t)}${draft(n)}${branchOf(p)}<div class="by">${esc(p.by)} · ${esc(p.updated)}</div></td>
     <td class="n">${p.age}</td><td>${tCi(p.ci)}</td><td>${tReview(p)}</td><td>${tOnto(p)}</td>
     <td class="n${codeConf(p) ? "" : " zero"}">${codeConf(p)}</td><td class="n${p.breaks ? "" : " zero"}">${p.breaks}</td><td>${planCell(p)}</td><td>${tVersion(p)}</td>
     <td class="n">+${p.add ?? "?"} −${p.del ?? "?"}</td><td class="n${p.tests ? "" : " zero"}">${p.tests}</td></tr>`).join("");

@@ -63,6 +63,12 @@ DEFAULTS = {
     "conformance": None,                # outside standards each PR touches: specs, their paths and tools, controls (a file or an object)
     "method_notes": [],
     "release_symbols": None,            # {"functions": [...], "classes": [...], "pages_re": ...}: what each release removed
+    "merge_up": [],                     # release branches merged up into the base after every change, oldest first
+    "landings": "merge",                # "merge+commit": a PR a commit closed counts as landed, by that commit's committer
+    "quote_sources": [],                # quoted documents outside the repository: {"match": url regex, "raw": plain-text url}
+    "tests_re": None,                   # a PR's test files (default: those under tests/)
+    "mechanical_conflicts": "stop",     # "resolve": a PR conflicting with the base only in mechanical files is still paired there
+    "stale_conflicts": "link",          # "apart": code conflicts found branch to branch neither group nor block
 }
 
 

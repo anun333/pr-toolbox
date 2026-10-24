@@ -107,10 +107,18 @@ def desktop(pg):
         press(pg, "#tall")
     heads = pg.eval_on_selector_all("#ttable thead th", "ts => ts.map(t => [!!t.querySelector('button[data-sort]'), t.getAttribute('aria-sort')])")
     check("every column sorts and says so", heads and all(b and a in ("none", "ascending", "descending") for b, a in heads), f"{sum(b for b, _ in heads)} of {len(heads)}")
+    # wait for the header to announce each order before reading rows: a fixed pause read php-src's 1,220-row table
+    # before it had redrawn
+    sorted_as = "d => document.querySelector('#ttable th button[data-sort=\"t\"]').parentElement.getAttribute('aria-sort') === d"
+    # the title itself, not the cell's first line: pills follow it (draft, a release branch), and php-src opens one fix
+    # under one title on two branches (#24102 on PHP-8.6, #24103 on master), which the pill would put out of order
+    title_text = "tds => tds.map(td => td.firstChild.textContent.trim().toLowerCase())"
     press(pg, '#ttable th button[data-sort="t"]')
-    titles = [t.splitlines()[0].lower() for t in col(pg, 2)]
+    pg.wait_for_function(sorted_as, arg="ascending", timeout=10000)
+    titles = pg.eval_on_selector_all("#ttable tbody tr[data-n] td:nth-child(2)", title_text)
     press(pg, '#ttable th button[data-sort="t"]')
-    titles2 = [t.splitlines()[0].lower() for t in col(pg, 2)]
+    pg.wait_for_function(sorted_as, arg="descending", timeout=10000)
+    titles2 = pg.eval_on_selector_all("#ttable tbody tr[data-n] td:nth-child(2)", title_text)
     check("title sorts A to Z, then Z to A", titles == sorted(titles) and titles2 == sorted(titles2, reverse=True), titles[:2])
     press(pg, '#ttable th button[data-sort="age"]')
     ages, aria = [int(a) for a in col(pg, 3)], pg.eval_on_selector('#ttable th button[data-sort="age"]', "b => b.parentElement.getAttribute('aria-sort')")
@@ -218,6 +226,27 @@ def desktop(pg):
     stray = [n for n in others if n in PRS or n in MAP["stamp"]["mass"]]
     check("PRs aimed at another branch are named, not compared", "other_bases" in MAP and all(f"#{n}" in named for n in others) and not stray,
           f"{len(others)} named; compared anyway: {stray}" if "other_bases" in MAP else "the page doesn't say which PRs aim at another branch")
+    # merge-up (php-src): a PR aimed at a release branch names it beside its title, and each conflict further up the
+    # chain has its own line on its card. Lower case throughout: pills may display in capitals.
+    up = next((n for n, p in PRS.items() if p.get("merge_up")), None)
+    if up:
+        pg.fill("#q", up)
+        press(pg, "#lookup-form button", 300)
+        card = pg.inner_text("#result").lower()
+        first = PRS[up]["merge_up"][0]["branch"].lower()
+        check("a release-branch PR's card names its branch and its merge-up conflicts",
+              PRS[up]["base"].lower() in card.splitlines()[0] and "merge-up conflict" in card and f"into {first}" in card, card[:140])
+    # a code conflict found only head to head ("stale_conflicts": "apart") has its own line, not the mechanical one
+    later = next((n for n, p in PRS.items() if any(c["kind"] == "after a rebase" for c in p.get("conflicts", []))), None)
+    if later:
+        pg.fill("#q", later)
+        press(pg, "#lookup-form button", 300)
+        lines = pg.inner_text("#result").lower().splitlines()
+        line = next((x for x in lines if x.startswith("after a rebase")), "")
+        mech_line = next((x for x in lines if x.startswith("mechanical")), "")
+        partners = [str(c["n"]) for c in PRS[later]["conflicts"] if c["kind"] == "after a rebase"]
+        check("a conflict found head to head has its own line, not the mechanical one",
+              bool(line) and all(f"#{n}" in line for n in partners[:3]) and not any(f"#{n} " in mech_line + " " for n in partners), line[:120] or later)
     # a PR that left the list but is still open (now aimed at another branch) was neither merged nor closed
     s = MAP.get("since") or {}
     left = {x["n"] for k in ("merged", "closed", "gone") for x in s.get(k, [])}

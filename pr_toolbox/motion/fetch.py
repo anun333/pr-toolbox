@@ -24,7 +24,7 @@ P = json.loads(Path(os.environ["WIM_PROFILE"]).read_text())
 QUERY = """query($cursor: String) {
   repository(owner: "%OWNER%", name: "%NAME%") { pullRequests(states: OPEN, first: 25, after: $cursor) {
     pageInfo { hasNextPage endCursor }
-    nodes { number title isDraft createdAt updatedAt baseRefName headRefOid additions deletions changedFiles body
+    nodes { number title isDraft createdAt updatedAt baseRefName headRefOid headRepository { url } additions deletions changedFiles body
       reviewDecision authorAssociation author { login }
       labels(first: 20) { nodes { name } }
       closingIssuesReferences(first: 10) { nodes { number } }
@@ -99,10 +99,13 @@ def read_pages(call, size=25, least=5):
         cursor = page["pageInfo"]["endCursor"]
 
 
-def split_by_base(prs, base):
+def split_by_base(prs, base, merge_up=()):
     """(PRs aimed at the base, the rest). A PR aimed at another branch, such as a release branch's backport, merges onto
-    that branch: merged onto the base it would carry every commit between the two, and meet everything."""
-    return [p for p in prs if p["baseRefName"] == base], [p for p in prs if p["baseRefName"] != base]
+    that branch: merged onto the base it would carry every commit between the two, and meet everything. A branch the
+    profile lists in merge_up is merged up into the base after every change (php-src's PHP-8.x branches), so its PRs end
+    up on the base too and are kept."""
+    kept = {base, *merge_up}
+    return [p for p in prs if p["baseRefName"] in kept], [p for p in prs if p["baseRefName"] not in kept]
 
 
 def _query(size, cursor):
@@ -114,7 +117,8 @@ def _query(size, cursor):
 prs = read_pages(_query)
 if len(prs) < 50:
     raise SystemExit(f"only {len(prs)} open PRs came back; refusing to build on that")
-prs, others = split_by_base(prs, P["base_branch"])
+MERGE_UP = P.get("merge_up") or []
+prs, others = split_by_base(prs, P["base_branch"], MERGE_UP)
 (C / "other-bases.json").write_text(json.dumps([{"number": p["number"], "title": p["title"], "base": p["baseRefName"],
                                                  "by": (p.get("author") or {}).get("login") or "ghost"} for p in others]))
 
@@ -140,12 +144,41 @@ for p in prs:
 (C / "pr-extra.json").write_text(json.dumps(extra))
 (C / "open-prs.txt").write_text("".join(f"{p['number']} {p['baseRefName']}\n" for p in prs))
 
+def fetch_head(repo, remote, n, head, head_repo=None):
+    """refs/pr/<n> at the PR's head, from GitHub's refs/pull/<n>/head. That ref can be missing or behind the head GitHub
+    reports for the PR (php-src on 2026-10-24: #24439 had only refs/pull/24439/merge; #21778's head ref sat at an
+    older commit than the last one in its commit list). Then the head is read from the merge ref's second parent, or
+    fetched by its id from the repository, which serves its forks' commits, or from the head repository itself. A
+    route counts only when it comes out at the head GitHub reports."""
+    git_ = lambda *a: subprocess.run(["git", "-C", str(repo), *a], capture_output=True, text=True)
+    at_head = lambda ref: git_("rev-parse", "-q", "--verify", ref).stdout.strip() == head
+    if not git_("fetch", "-q", remote, f"+refs/pull/{n}/head:refs/pr/{n}").returncode and at_head(f"refs/pr/{n}"):
+        return True
+    if not git_("fetch", "-q", remote, f"+refs/pull/{n}/merge:refs/pr-merge/{n}").returncode:
+        second_is_head = at_head(f"refs/pr-merge/{n}^2")
+        git_("update-ref", "-d", f"refs/pr-merge/{n}")
+        if second_is_head:
+            return not git_("update-ref", f"refs/pr/{n}", head).returncode
+    for source in (remote, head_repo):
+        if source and not git_("fetch", "-q", source, head).returncode and at_head(f"{head}^{{commit}}"):
+            return not git_("update-ref", f"refs/pr/{n}", head).returncode
+    return False
+
+
 # master and every open PR's head; a PR whose head can't be fetched is reported, not silently dropped
-run("git", "-C", str(REPO), "fetch", "-q", P["remote"], P["base_branch"])
+run("git", "-C", str(REPO), "fetch", "-q", P["remote"], P["base_branch"], *MERGE_UP)
 numbers = [p["number"] for p in prs]
+head_repo = {p["number"]: (p.get("headRepository") or {}).get("url") for p in prs}
 for i in range(0, len(numbers), 40):
-    run("git", "-C", str(REPO), "fetch", "-q", P["remote"], *[f"+refs/pull/{n}/head:refs/pr/{n}" for n in numbers[i:i + 40]])
-missing = [n for n in numbers if run("git", "-C", str(REPO), "rev-parse", "-q", "--verify", f"refs/pr/{n}", check=False).strip() != extra[n]["head"]]
+    batch = numbers[i:i + 40]
+    r = subprocess.run(["git", "-C", str(REPO), "fetch", "-q", P["remote"], *[f"+refs/pull/{n}/head:refs/pr/{n}" for n in batch]],
+                       capture_output=True, text=True)
+    # one ref GitHub doesn't have fails the whole batch, and one it has kept behind fetches the wrong commit: those go
+    # one by one
+    at = lambda n: run("git", "-C", str(REPO), "rev-parse", "-q", "--verify", f"refs/pr/{n}", check=False).strip()
+    for n in batch if r.returncode else [n for n in batch if at(n) != extra[n]["head"]]:
+        fetch_head(REPO, P["remote"], n, extra[n]["head"], head_repo[n])
+missing =[n for n in numbers if run("git", "-C", str(REPO), "rev-parse", "-q", "--verify", f"refs/pr/{n}", check=False).strip() != extra[n]["head"]]
 if missing:
     raise SystemExit(f"PR heads not fetched or not matching GitHub: {missing[:20]}")
 
@@ -153,32 +186,48 @@ if missing:
 from datetime import date, timedelta
 MERGED = """query($q: String!, $cursor: String) { search(query: $q, type: ISSUE, first: 100, after: $cursor) {
   issueCount pageInfo { hasNextPage endCursor } nodes { ... on PullRequest { mergedBy { login } } } } }"""
+# Projects that land a PR by pushing its commits close it with that commit, unmerged (php-src: 33 of its last 100 closed
+# PRs on 2026-10-24, against 29 merged with the button). With "landings": "merge+commit" those count too, by the
+# commit's committer: the one who pushed it.
+CLOSED_BY_COMMIT = """query($q: String!, $cursor: String) { search(query: $q, type: ISSUE, first: 100, after: $cursor) {
+  issueCount pageInfo { hasNextPage endCursor } nodes { ... on PullRequest { timelineItems(itemTypes: [CLOSED_EVENT], last: 1) {
+    nodes { ... on ClosedEvent { closer { __typename ... on Commit { committer { user { login } } } } } } } } } } }"""
 mergers = {}
 
 
-def merged_between(start, end, tries=3):
+def landed_by(node, kind):
+    """Who landed a PR the search found: the merger, or for one closed by a commit, that commit's committer."""
+    if kind == "merged":
+        return (node.get("mergedBy") or {}).get("login")
+    closer = (((node.get("timelineItems") or {}).get("nodes") or [{}])[-1] or {}).get("closer") or {}
+    return ((closer.get("committer") or {}).get("user") or {}).get("login") if closer.get("__typename") == "Commit" else None
+
+
+def merged_between(start, end, tries=3, kind="merged"):
     """Counts each merger in [start, end], halving the window while search would cut it off at 1,000. Under load, search
     can also end a window early with no error, on a page whose count reads 0, the first page included (decidim/decidim
     on 2026-10-22: 400 of a window's merges read; 100 of 420 on another). A read is whole when every page gives the same
     count and that many merges came back; one that isn't is read again, then halved, and a single day that stays short
-    stops the build. Counts join the total only once their window is whole."""
-    q, cursor, expected, seen, found, counts = f"repo:{P['github']} is:pr is:merged merged:{start}..{end}", None, None, 0, {}, set()
+    stops the build. Counts join the total only once their window is whole. kind "closed" reads the PRs closed unmerged
+    instead, and counts those a commit closed."""
+    what = f"is:merged merged:{start}..{end}" if kind == "merged" else f"is:closed is:unmerged closed:{start}..{end}"
+    q, cursor, expected, seen, found, counts = f"repo:{P['github']} is:pr {what}", None, None, 0, {}, set()
     while True:
-        args = ["gh", "api", "graphql", "-f", f"query={MERGED}", "-f", f"q={q}"] + (["-f", f"cursor={cursor}"] if cursor else [])
+        args = ["gh", "api", "graphql", "-f", f"query={MERGED if kind == 'merged' else CLOSED_BY_COMMIT}", "-f", f"q={q}"] + (["-f", f"cursor={cursor}"] if cursor else [])
         page = json.loads(run(*args))["data"]["search"]
         if expected is None:
             if page["issueCount"] > 1000:
                 if start == end:
                     raise SystemExit(f"{q}: over 1,000 merges in one day")
                 mid = start + (end - start) // 2
-                merged_between(start, mid)
-                merged_between(mid + timedelta(days=1), end)
+                merged_between(start, mid, kind=kind)
+                merged_between(mid + timedelta(days=1), end, kind=kind)
                 return
             expected = page["issueCount"]
         counts.add(page["issueCount"])
         seen += len(page["nodes"])
         for node in page["nodes"]:
-            login = (node.get("mergedBy") or {}).get("login")
+            login = landed_by(node, kind)
             if login:
                 found[login] = found.get(login, 0) + 1
         if not page["pageInfo"]["hasNextPage"]:
@@ -186,18 +235,20 @@ def merged_between(start, end, tries=3):
         cursor = page["pageInfo"]["endCursor"]
     if seen != expected or len(counts) > 1:
         if tries > 1:
-            return merged_between(start, end, tries - 1)
+            return merged_between(start, end, tries - 1, kind)
         if start == end:
             raise SystemExit(f"{q}: search returned {seen} of {expected} merges")
         mid = start + (end - start) // 2
-        merged_between(start, mid)
-        merged_between(mid + timedelta(days=1), end)
+        merged_between(start, mid, kind=kind)
+        merged_between(mid + timedelta(days=1), end, kind=kind)
         return
     for login, k in found.items():
         mergers[login] = mergers.get(login, 0) + k
 
 
 merged_between(date.today() - timedelta(days=365), date.today())
+if P.get("landings") == "merge+commit":
+    merged_between(date.today() - timedelta(days=365), date.today(), kind="closed")
 (C / "mergers.json").write_text(json.dumps(dict(sorted(mergers.items(), key=lambda x: -x[1]))))
 
 # plan issues, fresh each build
@@ -225,6 +276,59 @@ for n in cited:
     out = run("gh", "api", f"repos/{P['github']}/issues/{n}", "--jq",
               "{number,title,state,user:.user.login,updated_at,labels:[.labels[].name],body,comments,pr:(.pull_request!=null)}", check=False)
     (C / "issues" / f"{n}.json").write_text(out or "{}")
+
+
+def quote_source_for(url, sources):
+    """The profile's quote source that names url, and its match; (None, None) when none does."""
+    for s in sources:
+        m = re.match(s["match"], url or "")
+        if m:
+            return s, m
+    return None, None
+
+
+def quote_raw_url(url, sources):
+    """The plain-text address of a quoted document outside the repository, by the profile's quote_sources (each a
+    "match" regex and a "raw" template filled with its groups), or None. php-src's plans live on wiki.php.net, whose
+    ?do=export_raw is the page as written; the rendered page is not what to match a quote against."""
+    s, m = quote_source_for(url, sources)
+    return s["raw"].format(*m.groups()) if s else None
+
+
+def clean_quoted(text, source):
+    """The source's own markup taken out by its "clean" pairs (regex, replacement), so a quote matches the words as a
+    reader sees them: in DokuWiki, [[rfc:x|the label]] reads as its label and ''code'' as code."""
+    for pat, rep in source.get("clean", []):
+        text = re.sub(pat, rep, text)
+    return text
+
+
+# quoted documents outside the repository, fresh each build, so a --skip-fetch rebuild checks quotes offline. A source
+# the profile names that can't be read stops the build: read as "no source", its quotes would go unchecked.
+import hashlib
+import urllib.request
+QUOTE_SOURCES = P.get("quote_sources") or []
+quoted = {}
+urls = {t.get("url") for s in streams["streams"] for t in s.get("target", [])} | {g.get("url") for g in streams.get("general", [])}
+for url in sorted(u for u in urls if u):
+    source, _ = quote_source_for(url, QUOTE_SOURCES)
+    raw = quote_raw_url(url, QUOTE_SOURCES)
+    if not raw:
+        continue
+    req = urllib.request.Request(raw, headers={"User-Agent": "pr-toolbox motion (quote check)"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            text = r.read().decode("utf-8", "replace")
+    except OSError as e:
+        raise SystemExit(f"quote source {raw}: {e}")
+    if not text.strip():
+        raise SystemExit(f"quote source {raw}: empty")
+    (C / "quotes").mkdir(exist_ok=True)
+    name = hashlib.sha256(url.encode()).hexdigest()[:16] + ".txt"
+    (C / "quotes" / name).write_text(clean_quoted(text, source))
+    quoted[url] = name
+(C / "quotes.json").write_text(json.dumps(quoted, indent=1))
 print(json.dumps({"open_prs": len(prs), "other_bases": len(others), "drafts": sum(p["isDraft"] for p in prs), "heads_fetched": len(numbers) - len(missing),
+                  "on_release_branches": {b: sum(1 for p in prs if p["baseRefName"] == b) for b in MERGE_UP},
                   "ci": {s: sum(1 for e in extra.values() if e["ci"] == s) for s in ("SUCCESS", "FAILURE", "ERROR", "PENDING", "EXPECTED", None)},
-                  "plan_issues": len(plan), "mergers_past_year": mergers}))
+                  "plan_issues": len(plan), "quoted_documents": len(quoted), "mergers_past_year": mergers}))

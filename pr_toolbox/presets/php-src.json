@@ -1,0 +1,53 @@
+{
+  "name": "php-src",
+  "description": "php-src (php/php-src): the PHP interpreter in C. Bug fixes go to the lowest supported PHP-8.x branch and are merged up to master after every change; most PRs land by pushing their commits, which closes them unmerged.",
+  "version_claims": null,
+  "exact_caps": null,
+  "health_ignore": "^(codecov/.*)$",
+  "motion": {
+    "title": "php-src Work in Motion",
+    "project": "php-src",
+    "ci_required": "^(Suite / )?LINUX_X64_RELEASE_NTS$",
+    "mass_files": 150,
+    "merge_up": ["PHP-8.2", "PHP-8.3", "PHP-8.4", "PHP-8.5", "PHP-8.6"],
+    "landings": "merge+commit",
+    "mechanical_conflicts": "resolve",
+    "stale_conflicts": "apart",
+    "mechanical": "^(NEWS|UPGRADING|UPGRADING\\.INTERNALS|Zend/Optimizer/zend_func_infos\\.h|Zend/zend_vm_execute\\.h|Zend/zend_vm_handlers\\.h|Zend/zend_vm_opcodes\\.c|Zend/zend_vm_opcodes\\.h|ext/ffi/ffi_parser\\.c|ext/fileinfo/data_file\\.c|ext/mbstring/libmbfl/mbfl/eaw_table\\.h|ext/mbstring/rare_cp_bitvec\\.h|ext/mbstring/unicode_data\\.h|ext/phar/stub\\.h|ext/standard/credits_ext\\.h|ext/standard/credits_sapi\\.h|ext/standard/html_tables\\.h|ext/tokenizer/tokenizer_data\\.c|main/debug_gdb_scripts\\.c|main/php_version\\.h|sapi/cli/mime_type_map\\.h|win32/cp_enc_map\\.c|.*_arginfo\\.h|.*_decl\\.h)$",
+    "mechanical_note": "NEWS, UPGRADING, UPGRADING.INTERNALS and the files php-src's scripts generate: every *_arginfo.h and *_decl.h from its stub, the VM's zend_vm_execute.h, zend_vm_handlers.h and zend_vm_opcodes, tokenizer_data.c, php_version.h and the other generated tables",
+    "release_tags": {"pattern": "^php-(\\d+)\\.(\\d+)\\.0$", "count": 5},
+    "skip_labels": [],
+    "placeholder_issues": [],
+    "left_out_paths": ["Zend/asm/", "ext/date/lib/", "ext/fileinfo/libmagic/", "ext/gd/libgd/", "ext/hash/xxhash/", "ext/lexbor/lexbor/", "ext/opcache/jit/ir/", "ext/pcre/pcre2lib/", "ext/standard/libavifinfo/", "ext/uri/uriparser/"],
+    "left_out_re": "^(Zend/asm/|build/ax_[^/]*\\.m4$|build/config\\.guess$|build/config\\.sub$|build/libtool\\.m4$|build/lt[^/]*\\.m4$|build/ltmain\\.sh$|build/pkg\\.m4$|build/shtool$|ext/date/lib/|ext/fileinfo/libmagic/|ext/gd/libgd/|ext/hash/xxhash/|ext/lexbor/lexbor/|ext/opcache/jit/ir/|ext/pcre/pcre2lib/|ext/standard/html_tables/mappings/|ext/standard/libavifinfo/|ext/uri/uriparser/|sapi/cli/php_http_parser\\.[ch]$|sapi/cli/ps_title\\.c$)",
+    "left_out_note": "the third-party libraries php-src bundles (timelib, libmagic, libgd, PCRE2, uriparser, lexbor, the JIT's IR, Boost.Context's assembly and the like), which are updated from upstream rather than changed in place",
+    "maintainer_roles": ["OWNER", "MEMBER"],
+    "bots": "(\\[bot\\]$|-bot$|^dependabot$|^github-actions$)",
+    "code_files": ["*", ":!*/tests/*", ":!tests/*", ":!NEWS", ":!UPGRADING*"],
+    "diff_files": ["*.c", "*.h", "*.stub.php", ":!*/tests/*"],
+    "symbols": "php",
+    "tests_re": "\\.phpt$",
+    "name_paths": ["*.stub.php", "*.c", "Zend/zend_vm_def.h"],
+    "names": [
+      {"kind": "function", "where": {"suffix": ".stub.php"}, "pattern": "^\\s*function\\s+(\\w+)\\s*\\(", "added_only": true},
+      {"kind": "class", "where": {"suffix": ".stub.php"}, "pattern": "^\\s*(?:final\\s+|abstract\\s+|readonly\\s+)*(?:class|interface|trait|enum)\\s+(\\w+)", "added_only": true},
+      {"kind": "constant", "where": {"suffix": ".stub.php"}, "pattern": "^const\\s+(\\w+)\\s*=", "added_only": true},
+      {"kind": "ini setting", "where": {"suffix": ".c"}, "pattern": "(?:STD_)?(?:PHP|ZEND)_INI_(?:ENTRY|BOOLEAN)\\w*\\(\\s*\"([\\w.]+)\"", "added_only": true},
+      {"kind": "opcode number", "where": {"equals": "Zend/zend_vm_def.h"}, "pattern": "^ZEND_VM_[A-Z_]*HANDLER\\((\\d+),", "added_only": true}
+    ],
+    "anchors": {"test_re": "(^|/)tests/|\\.phpt$"},
+    "invited_labels": ["Good first issue"],
+    "quote_sources": [
+      {"match": "^https://wiki\\.php\\.net/((?:rfc|todo)/[^?#]+)", "raw": "https://wiki.php.net/{0}?do=export_raw",
+       "clean": [["\\[\\[[^|\\]]*\\|\\s*([^\\]]*)\\]\\]", "\\1"], ["''", ""], ["\\*\\*", ""], ["(?<!:)//", ""]]},
+      {"match": "^https://github\\.com/php/policies/blob/main/([^#]+)", "raw": "https://raw.githubusercontent.com/php/policies/main/{0}"}
+    ],
+    "method_notes": [
+      "php-src lands most PRs by pushing their commits, which closes them without merging them: of its last 100 closed PRs on 2026-10-24, 29 were merged and 33 were closed by a commit. A PR a commit closed counts as landed here, and the commit's committer as the one who landed it.",
+      "CI counts as run when the head carries the LINUX_X64_RELEASE_NTS job (named Suite / LINUX_X64_RELEASE_NTS since the workflow was reorganised). php-src's test workflow skips PRs that change only documentation, NEWS, UPGRADING and the like, so those read CI not run, as do older PRs whose heads carry no checks at all.",
+      "Opcode numbers, ini settings, and the functions, classes and constants a stub declares count as a shared name only when two PRs both add them: a PR that edits an existing one's line adds nothing."
+    ],
+    "streams": "php-src-motion-streams.json",
+    "controls": "php-src-motion-controls.json"
+  }
+}

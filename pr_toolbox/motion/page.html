@@ -593,6 +593,10 @@ function renderMethod() {
     ${(MAP.other_bases || []).length ? `<li id="other-bases">${plural(MAP.other_bases.length, "open PR is", "open PRs are")} aimed at another branch than ${esc(BASE)}, so ${MAP.other_bases.length === 1 ? "it was" : "they were"} left out: ${MAP.other_bases.map((o) => `<a class="mono" href="${GH}pull/${o.number}" title="${esc(o.title)} · ${esc(o.by)}">#${o.number}</a> onto <code>${esc(o.base)}</code>`).join(", ")}. Each merges onto its own branch; merged onto ${esc(BASE)} it would carry every commit between the two.</li>` : ""}
     <li>A check is only as good as its controls: the known cases this build had to find are listed under <i>Controls this build</i>.</li></ul></div>
     ${rebuildPanel()}`;
+  // Reference rather than reading: folded, one click away, and opened by any link into it (#rebuild among them).
+  const methodBody = $("#method-body");
+  methodBody.className = "stack";
+  methodBody.innerHTML = `<details class="fold" id="method-fold"><summary><h3>The method, its checks and its limits</h3><span class="facts">how each finding was made · what it cannot see · how to rebuild it</span></summary><div class="fold-in"><div class="grid2">${methodBody.innerHTML}</div></div></details>`;
 }
 
 /* how a reader reruns this page, or one card, without anyone's copy of it */

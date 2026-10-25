@@ -948,6 +948,13 @@ function renderQueues() {
     parts.push(`<div class="panel" id="label-gaps"><h3>Labels the build disagrees with</h3><p class="muted">Status labels say what a PR waits on: ${Object.entries(MAP.labels_vs_build.labels).map(([l, w]) => `<b>${esc(l)}</b> (${w === "review" ? "its reviewers" : "its author"})`).join(", ")}. Listed here when this build finds otherwise, oldest first.</p>
       <ul class="plain">${gaps.map((g) => `<li class="prline"><span class="num">${prLink(g.n)}</span><span>${esc(pr(g.n)?.t || "")}<div class="muted" style="font-size:.85rem">labelled ${esc(g.label)}, so ${esc(g.says)}, but: ${g.but.map(esc).join(", ")}</div></span></li>`).join("") || "<li>None.</li>"}</ul></div>`);
   }
+  // The tables fold away by default: a page for people who merge is read in a sitting, and the counts are a way into
+  // triage rather than something to read through. A link into the fold, or a count's own button, opens it.
+  const tables = parts.splice(0);
+  if (tables.length) {
+    const facts = [areas.length ? `${areas.length} areas` : "", UP ? "branches" : "", owners.length ? `${owners.length} owners` : "", gaps.length ? `${gaps.length} labels to check` : ""].filter(Boolean).join(" · ");
+    parts.push(`<details class="fold" id="queues-fold"><summary><h3>Counts by ${["area", UP ? "branch" : "", owners.length ? "owner" : ""].filter(Boolean).join(", ")}</h3><span class="facts">${esc(facts)}</span></summary><div class="fold-in">${tables.join("")}</div></details>`);
+  }
   if (MAP.exports) parts.push(`<div class="panel" id="data"><h3>The data</h3><p>One row per open PR, with each state above, its blockers, conflicts, group, areas and owners: <a href="${esc(MAP.exports.prs_csv)}" download>CSV</a> · <a href="${esc(MAP.exports.prs_json)}" download>JSON</a>. The groups: <a href="${esc(MAP.exports.groups_json)}" download>JSON</a>.</p><p class="muted">From the same build as this page, ${esc(BASE)} ${esc(MAP.stamp.master)}, ${esc(MAP.stamp.generated)}.</p><p class="muted" id="data-note"></p></div>`);
   $("#queues-body").innerHTML = parts.join("");
   $("#queues-body").addEventListener("click", (e) => {

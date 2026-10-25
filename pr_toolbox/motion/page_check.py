@@ -237,6 +237,10 @@ def desktop(pg):
         check("a release-branch PR's card names its branch and its merge-up conflicts",
               PRS[up]["base"].lower() in card.splitlines()[0] and "merge-up conflict" in card and f"into {first}" in card, card[:140])
     # queues: a count lists exactly that many PRs in triage, says which, and clearing it brings the rest back
+    fold = pg.query_selector("#queues-fold")
+    check("queues: the counts fold closed by default", fold is None or not pg.eval_on_selector("#queues-fold", "d => d.open"), "open" if fold and pg.eval_on_selector("#queues-fold", "d => d.open") else "closed")
+    if fold:
+        pg.eval_on_selector("#queues-fold", "d => { d.open = true; }")
     cells = pg.eval_on_selector_all("#queues-body button[data-qk]", "bs => bs.map(b => [b.dataset.qk, b.dataset.qv, b.dataset.qs, +b.textContent])")
     check("queues: counts to select", bool(cells) or not PRS, f"{len(cells)} counts")
     if cells:

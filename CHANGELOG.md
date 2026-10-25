@@ -1,7 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.8.0 (2026-10-25)
 
+The php-src work, merged and released: the page of every repository gained its Queues section, folded closed so a page stays a read of one sitting.
+
+- **`motion`: the Queues tables fold closed by default.** The counts by area, branch and owner, and the labels the build disagrees with, sit in one fold that a link into it, or a count, opens. The counts are a way into triage, not something to read through. On OpenEMR, the open tables were 991 pixels, a whole screen, and took the page past 20 desktop screens. `check-page` checks the fold starts closed, then opens it to test the counts.
 - **A profile can be a folder of its own.** `profile.json` beside the files it names (motion's areas and controls) and the scripts its check steps run, through the new `{profile_dir}` placeholder. `--config` takes such a folder, and a built-in preset may be one: php-src's is now `presets/php-src/`, and it is picked automatically for `php/php-src`. Flat presets (OpenEMR, Decidim) are unchanged.
 - **`check` for php-src.** Each changed stub's generated `*_arginfo.h` and `*_decl.h` must carry the stub's current hash, as php-src's CI checks by regenerating them; read only, and on all 138 stubs on master it agrees. Changed `.phpt` tests run with the checkout's own `sapi/cli/php`, and the step is skipped with a build hint when there is none.
 

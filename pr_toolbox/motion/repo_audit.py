@@ -563,16 +563,20 @@ findings["version_claims"] = {"master": master_claim, "claims": claims, "no_bump
 # SQL changed in an earlier release's upgrade file: only sites upgrading from before that release run it (right for
 # a fix to the old upgrade path; a change every site needs also belongs in the current file)
 UF = P.get("upgrade_files")
-findings["stale_upgrade"] = {"current": None, "prs": {}}
+# "only": PRs whose upgrade SQL is all in earlier files, none in the current one, so it reaches no site on the current
+# release; after a release branch is cut, that is every open PR written for the file the cut closed
+findings["stale_upgrade"] = {"current": None, "prs": {}, "only": []}
 if UF:
     vfile = git("show", f"{MASTER_SHA}:{UF['version_file']}").stdout
     target = UF["join"].join(re.search(UF["version_re"].replace("{part}", k), vfile).group(1) for k in UF["parts"])
     findings["stale_upgrade"]["current"] = UF["glob"].replace("{version}", target)
     for n in NUMBERS:
-        stale = sorted(p for p, f in prs[n]["files"].items() if f["status"] in "MA" and re.match(UF["pattern"], p)
-                       and not p.endswith(UF["current"].replace("{version}", target)))
+        ups = [p for p, f in prs[n]["files"].items() if f["status"] in "MA" and re.match(UF["pattern"], p)]
+        stale = sorted(p for p in ups if not p.endswith(UF["current"].replace("{version}", target)))
         if stale:
             findings["stale_upgrade"]["prs"][n] = stale
+            if len(stale) == len(ups):
+                findings["stale_upgrade"]["only"].append(n)
 conflicts = {tuple(int(x.split(":")[0]) for x in k.split(",")): v for k, v in pairs["pairs"].items()}
 
 

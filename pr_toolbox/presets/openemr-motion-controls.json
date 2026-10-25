@@ -93,6 +93,14 @@
       ],
       "in": "stale_upgrade.prs",
       "key": 7279
+    },
+    {
+      "name": "earlier release's file only: #7279's upgrade SQL is all in that file and none in the current release's, so it stays out of Nothing blocking",
+      "prs": [
+        7279
+      ],
+      "in": "stale_upgrade.only",
+      "key": 7279
     }
   ]
 }

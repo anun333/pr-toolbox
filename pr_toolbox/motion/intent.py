@@ -455,7 +455,8 @@ for n, m in meta.items():
            "owners": owners.get(n, []),
            "labels": labels_of.get(n, []),
            "head": prs_git.get(n, {}).get("head", ""),
-           "stale_sql": findings.get("stale_upgrade", {}).get("prs", {}).get(str(n), [])}
+           "stale_sql": findings.get("stale_upgrade", {}).get("prs", {}).get(str(n), []),
+           "stale_only": str(n) in map(str, findings.get("stale_upgrade", {}).get("only", []))}
     prs_out[n] = rec
 
 # rebase share: how many PRs that need a rebase conflict only in mechanical files
@@ -630,6 +631,8 @@ def blockers(n, p):
         out.append("version number")
     if p["caps_alone"] or p["caps_with"]:
         out.append("caps")
+    if p["stale_only"]:
+        out.append("upgrade SQL in an earlier release's file")
     return out
 
 

@@ -719,6 +719,58 @@ class StaleConflicts(unittest.TestCase):
         self.assertEqual((["after a rebase"], 0, True), out["apart"], "shown on the card, but #51 must rebase before it matters")
 
 
+class StaleUpgrade(unittest.TestCase):
+    """Upgrade SQL only in an earlier release's file, after a branch cut, keeps a PR out of Nothing blocking; the same
+    file changed alongside the current one is shown on the card but blocks nothing."""
+
+    def test_only_earlier_file_blocks(self) -> None:
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        repo = tmp / "repo"
+        repo.mkdir()
+        git(repo, "init", "-q", "-b", "master")
+        git(repo, "config", "user.email", "t@example.org")
+        git(repo, "config", "user.name", "t")
+        old, cur = "sql/8_4_1-to-8_5_0_upgrade.sql", "sql/8_5_0-to-8_6_0_upgrade.sql"
+        root = commit(repo, {"version.php": "$v_major = '8';\n$v_minor = '5';\n$v_patch = '0';\n", old: "-- 8.5.0\n"}, "8.5.0 dev")
+        cut = commit(repo, {"version.php": "$v_major = '8';\n$v_minor = '6';\n$v_patch = '0';\n", cur: "-- 8.6.0\n"}, "branch cut")
+        git(repo, "update-ref", "refs/remotes/origin/master", cut)
+        pr(repo, 71, root, {old: "-- 8.5.0\nALTER TABLE a ADD b int;\n"})                                # written before the cut
+        pr(repo, 72, "master", {old: "-- 8.5.0\nfix the old path;\n", cur: "-- 8.6.0\nALTER TABLE a ADD c int;\n"})
+        pr(repo, 73, "master", {cur: "-- 8.6.0\nALTER TABLE a ADD d int;\n"})
+        numbers = (71, 72, 73)
+        prlist = tmp / "open-prs.txt"
+        prlist.write_text("".join(f"{n} master\n" for n in numbers))
+        g = tmp / "inputs"
+        (g / "issues").mkdir(parents=True)
+        heads = {n: git(repo, "rev-parse", f"refs/pr/{n}") for n in numbers}
+        (g / "pr-meta.json").write_text(json.dumps([{"number": n, "title": f"PR {n}", "isDraft": False, "createdAt": "2026-10-01T00:00:00Z",
+                                                     "updatedAt": "2026-10-02T00:00:00Z", "author": {"login": f"a{n}"}, "labels": [],
+                                                     "baseRefName": "master"} for n in numbers]))
+        (g / "pr-bodies.json").write_text(json.dumps([{"number": n, "body": "", "reviewDecision": None} for n in numbers]))
+        (g / "pr-extra.json").write_text(json.dumps({n: {"head": heads[n], "additions": 1, "deletions": 0, "files": 1, "author_role": "CONTRIBUTOR",
+                                                         "comments": 0, "closing": [], "reviews": [], "ci": "SUCCESS"} for n in numbers}))
+        (g / "mergers.json").write_text("{}")
+        uf = {"pattern": r"^sql/[0-9_]+-to-[0-9_]+_upgrade\.sql$", "version_file": "version.php", "version_re": r"\$v_{part}\s*=\s*'(\d+)'",
+              "parts": ["major", "minor", "patch"], "join": "_", "current": "-to-{version}_upgrade.sql", "glob": "sql/*-to-{version}_upgrade.sql"}
+        profile = tmp / "profile.json"
+        profile.write_text(json.dumps({**PROFILE, "version_claims": None, "mechanical": r"^sql/", "names": [], "name_paths": [], "upgrade_files": uf}))
+        env = {**os.environ, "WIM_PROFILE": str(profile), "WIM_OFFLINE": "1"}
+        work = tmp / "audit"
+        r = subprocess.run([sys.executable, "-I", str(MOTION / "repo_audit.py"), str(repo), str(work), str(prlist)], capture_output=True, text=True, env=env)
+        self.assertEqual(0, r.returncode, r.stderr[-1500:])
+        r = subprocess.run([sys.executable, "-I", str(MOTION / "intent.py"), str(repo), str(work), str(g), str(MOTION / "page.html"), str(tmp / "p.html")],
+                           capture_output=True, text=True, env=env)
+        self.assertEqual(0, r.returncode, r.stderr[-1500:])
+        m = json.loads((work / "map.json").read_text())
+        self.assertEqual("sql/*-to-8_6_0_upgrade.sql", m["merge"]["stale_upgrade"]["current"])
+        got = {n: (m["prs"][str(n)]["stale_sql"], m["prs"][str(n)]["stale_only"]) for n in numbers}
+        self.assertEqual({71: ([old], True), 72: ([old], False), 73: ([], False)}, got)
+        rows = {r["number"]: r for r in json.loads((tmp / "p-prs.json").read_text())["prs"]}
+        self.assertEqual((False, ["upgrade SQL in an earlier release's file"]), (rows[71]["nothing_blocking"], rows[71]["blockers"]))
+        self.assertEqual((True, True), (rows[72]["nothing_blocking"], rows[73]["nothing_blocking"]))
+
+
 class Lenses(unittest.TestCase):
     """Owners from CODEOWNERS on each PR's own branch, one fix opened twice, status labels the build disagrees with,
     the data files, and pairs that share only mechanical files left unmerged when the profile says so."""

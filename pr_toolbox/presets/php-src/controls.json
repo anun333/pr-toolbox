@@ -1,0 +1,50 @@
+{
+  "_about": "Known cases each check must find (or must not flag), chosen from php-src's open PRs on 2026-10-24 and each reproduced by hand with git merge-tree, merge-base or the PR's diff. A control whose PRs are no longer all open is retired, not failed; replace it with a current case when that happens.",
+  "controls": [
+    {
+      "name": "text conflict: #7651 and #24240 meet in ext/pgsql/pgsql.c, found on master although #24240 conflicts with master only in UPGRADING",
+      "prs": [7651, 24240],
+      "in": "text_conflict",
+      "match": {"prs": [7651, 24240], "how": "onto master", "code": ["ext/pgsql/pgsql.c"]}
+    },
+    {
+      "name": "no conflict between #7173 (on master, last rebased 2023-11) and #24188 (on PHP-8.2): merged head to head they conflict in 95 files, none of which both change",
+      "prs": [7173, 24188],
+      "in": "text_conflict",
+      "match": {"prs": [7173, 24188]},
+      "expect": "absent"
+    },
+    {
+      "name": "merge-up: #17720 conflicts with its own branch, PHP-8.3, in main/network.c",
+      "prs": [17720],
+      "in": "summary.merge_up.conflict_with_own_base",
+      "key": 17720
+    },
+    {
+      "name": "merge-up: #12915 merges onto PHP-8.2 but conflicts in ext/ffi/ffi.c merged up into PHP-8.3 and master",
+      "prs": [12915],
+      "in": "master_conflicts",
+      "key": 12915
+    },
+    {
+      "name": "shared opcode number: 211 in #20275 (ZEND_NULLABLE_CAST), #20574 (ZEND_HAS_TYPE) and #20786 (ZEND_DEFER_PUSH)",
+      "prs": [20275, 20574, 20786],
+      "in": "shared_name",
+      "match": {"kind": "opcode number", "name": "211"},
+      "contains": [20275, 20574, 20786]
+    },
+    {
+      "name": "not a shared name: #10317 and #12098 both edit setcookie()'s stub line, and neither adds it",
+      "prs": [10317, 12098],
+      "in": "shared_name",
+      "match": {"kind": "function", "name": "setcookie"},
+      "expect": "absent"
+    },
+    {
+      "name": "stacked: #20682 is built on #20676",
+      "prs": [20676, 20682],
+      "in": "stacked",
+      "match": {"contained": 20676, "in": 20682}
+    }
+  ]
+}

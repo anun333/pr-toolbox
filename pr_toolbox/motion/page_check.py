@@ -20,7 +20,7 @@ SHOTS = Path(sys.argv[sys.argv.index("--shots") + 1]) if "--shots" in sys.argv e
 URL = PAGE.as_uri()
 MAP = json.loads(re.search(r"const MAP = (\{.*?\});\n", PAGE.read_text()).group(1))
 PRS = MAP["prs"]
-CONTAINERS = ["stamp", "glance-row", "path-body", "presets", "filters", "ttable", "general", "area-list", "twice-body",
+CONTAINERS = ["stamp", "glance-row", "path-body", "presets", "filters", "ttable", "general", "area-list", "twice-body", "queues-body",
               "merge-stats", "merge-body", "release-table", "method-body"]
 CODE_AS_TEXT = ["${", "[object Object]", "esc(", " 1 PRs "]
 fails = []
@@ -107,10 +107,18 @@ def desktop(pg):
         press(pg, "#tall")
     heads = pg.eval_on_selector_all("#ttable thead th", "ts => ts.map(t => [!!t.querySelector('button[data-sort]'), t.getAttribute('aria-sort')])")
     check("every column sorts and says so", heads and all(b and a in ("none", "ascending", "descending") for b, a in heads), f"{sum(b for b, _ in heads)} of {len(heads)}")
+    # wait for the header to announce each order before reading rows: a fixed pause read php-src's 1,220-row table
+    # before it had redrawn
+    sorted_as = "d => document.querySelector('#ttable th button[data-sort=\"t\"]').parentElement.getAttribute('aria-sort') === d"
+    # the title itself, not the cell's first line: pills follow it (draft, a release branch), and php-src opens one fix
+    # under one title on two branches (#24102 on PHP-8.6, #24103 on master), which the pill would put out of order
+    title_text = "tds => tds.map(td => td.firstChild.textContent.trim().toLowerCase())"
     press(pg, '#ttable th button[data-sort="t"]')
-    titles = [t.splitlines()[0].lower() for t in col(pg, 2)]
+    pg.wait_for_function(sorted_as, arg="ascending", timeout=10000)
+    titles = pg.eval_on_selector_all("#ttable tbody tr[data-n] td:nth-child(2)", title_text)
     press(pg, '#ttable th button[data-sort="t"]')
-    titles2 = [t.splitlines()[0].lower() for t in col(pg, 2)]
+    pg.wait_for_function(sorted_as, arg="descending", timeout=10000)
+    titles2 = pg.eval_on_selector_all("#ttable tbody tr[data-n] td:nth-child(2)", title_text)
     check("title sorts A to Z, then Z to A", titles == sorted(titles) and titles2 == sorted(titles2, reverse=True), titles[:2])
     press(pg, '#ttable th button[data-sort="age"]')
     ages, aria = [int(a) for a in col(pg, 3)], pg.eval_on_selector('#ttable th button[data-sort="age"]', "b => b.parentElement.getAttribute('aria-sort')")
@@ -218,6 +226,53 @@ def desktop(pg):
     stray = [n for n in others if n in PRS or n in MAP["stamp"]["mass"]]
     check("PRs aimed at another branch are named, not compared", "other_bases" in MAP and all(f"#{n}" in named for n in others) and not stray,
           f"{len(others)} named; compared anyway: {stray}" if "other_bases" in MAP else "the page doesn't say which PRs aim at another branch")
+    # merge-up (php-src): a PR aimed at a release branch names it beside its title, and each conflict further up the
+    # chain has its own line on its card. Lower case throughout: pills may display in capitals.
+    up = next((n for n, p in PRS.items() if p.get("merge_up")), None)
+    if up:
+        pg.fill("#q", up)
+        press(pg, "#lookup-form button", 300)
+        card = pg.inner_text("#result").lower()
+        first = PRS[up]["merge_up"][0]["branch"].lower()
+        check("a release-branch PR's card names its branch and its merge-up conflicts",
+              PRS[up]["base"].lower() in card.splitlines()[0] and "merge-up conflict" in card and f"into {first}" in card, card[:140])
+    # queues: a count lists exactly that many PRs in triage, says which, and clearing it brings the rest back
+    cells = pg.eval_on_selector_all("#queues-body button[data-qk]", "bs => bs.map(b => [b.dataset.qk, b.dataset.qv, b.dataset.qs, +b.textContent])")
+    check("queues: counts to select", bool(cells) or not PRS, f"{len(cells)} counts")
+    if cells:
+        kind, value, state, want = max(cells, key=lambda c: (c[2] == "unreviewed", c[3] < 200, c[3]))
+        press(pg, f'#queues-body button[data-qk="{kind}"][data-qv="{value}"][data-qs="{state}"]', 400)
+        shown, scope = count_shown(pg), pg.inner_text("#tscope") if pg.query_selector("#tscope") else ""
+        check("queues: a count lists that many PRs in triage, and says which", shown == want and bool(scope), f"{kind} {value} {state}: count {want}, triage {shown}, scope {scope!r}")
+        press(pg, "#tscope-clear", 400)
+        check("queues: clearing the scope brings the rest back", pg.query_selector("#tscope") is None and count_shown(pg) > want or count_shown(pg) == len(PRS),
+              pg.inner_text("#tcount")[:80])
+    has_owners = any(p.get("owners") for p in PRS.values())
+    check("queues: an owner table when CODEOWNERS names someone", (pg.query_selector('[data-queue="owner"]') is not None) == has_owners, f"owners in the data: {has_owners}")
+    twins = (MAP.get("duplicates") or {}).get("same_title") or []
+    if twins:
+        twice = pg.inner_text("#twice-body").split("One fix, two PRs".upper() if "ONE FIX, TWO PRS" in pg.inner_text("#twice-body") else "One fix, two PRs")[-1]
+        missing = [t["prs"] for t in twins if not all(f"#{n}" in twice for n in t["prs"])]
+        check("same work twice: every fix opened twice is named", not missing, missing[:3])
+    if MAP.get("exports"):
+        hrefs = pg.eval_on_selector_all("#data a[download]", "as => as.map(a => a.getAttribute('href'))")
+        files = sorted(MAP["exports"].values())
+        check("the data files are linked and sit beside the page", sorted(hrefs) == files and all((PAGE.parent / f).exists() for f in files), f"{hrefs} / {files}")
+    gaps = (MAP.get("labels_vs_build") or {}).get("gaps")
+    if (MAP.get("labels_vs_build") or {}).get("labels"):
+        listed = pg.eval_on_selector_all("#label-gaps li.prline", "ls => ls.length")
+        check("labels the build disagrees with: each one listed", listed == len(gaps), f"page {listed}, build {len(gaps)}")
+    # a code conflict found only head to head ("stale_conflicts": "apart") has its own line, not the mechanical one
+    later = next((n for n, p in PRS.items() if any(c["kind"] == "after a rebase" for c in p.get("conflicts", []))), None)
+    if later:
+        pg.fill("#q", later)
+        press(pg, "#lookup-form button", 300)
+        lines = pg.inner_text("#result").lower().splitlines()
+        line = next((x for x in lines if x.startswith("after a rebase")), "")
+        mech_line = next((x for x in lines if x.startswith("mechanical")), "")
+        partners = [str(c["n"]) for c in PRS[later]["conflicts"] if c["kind"] == "after a rebase"]
+        check("a conflict found head to head has its own line, not the mechanical one",
+              bool(line) and all(f"#{n}" in line for n in partners[:3]) and not any(f"#{n} " in mech_line + " " for n in partners), line[:120] or later)
     # a PR that left the list but is still open (now aimed at another branch) was neither merged nor closed
     s = MAP.get("since") or {}
     left = {x["n"] for k in ("merged", "closed", "gone") for x in s.get(k, [])}
@@ -261,6 +316,33 @@ with sync_playwright() as p:
             desktop(pg)
         check(f"{label}: no script errors", not errors, errors[:3])
         pg.close()
+    if MAP.get("exports"):
+        # framed in the claude.ai viewer, a page can't follow a download link: the data links must save through the
+        # viewer's downloads capability. A stand-in viewer records what the page asks to save.
+        # served over HTTP, as the viewer serves it: a page opened as a file may not fetch its neighbours
+        import functools
+        import http.server
+        import threading
+
+        class Quiet(http.server.SimpleHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+        srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(Quiet, directory=str(PAGE.parent)))
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        pg = browser.new_page(viewport={"width": 1280, "height": 900})
+        pg.add_init_script("""window.__saved = []; window.claude = { use: (name) => Promise.resolve(name === "downloads"
+            ? { save: (r) => { window.__saved.push([r.filename, r.data && r.data.size]); return Promise.resolve({ status: "saved" }); } } : null) };""")
+        pg.goto(f"http://127.0.0.1:{srv.server_address[1]}/{PAGE.name}", wait_until="networkidle")
+        pg.wait_for_timeout(800)
+        pg.click('#data a[href$=".csv"]')
+        pg.wait_for_timeout(800)
+        saved = pg.evaluate("window.__saved")
+        csv_name = MAP["exports"]["prs_csv"]
+        check("in the viewer, a data link saves through the downloads capability",
+              len(saved) == 1 and saved[0][0].endswith(csv_name) and (saved[0][1] or 0) == (PAGE.parent / csv_name).stat().st_size,
+              saved or (pg.inner_text("#data-note") if pg.query_selector("#data-note") else "nothing saved, and no note on the page"))
+        pg.close()
+        srv.shutdown()
     browser.close()
 print(f"{len(fails)} failed" + (": " + ", ".join(fails) if fails else ""))
 sys.exit(1 if fails else 0)

@@ -15,6 +15,7 @@ import subprocess
 import sys
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
+from itertools import combinations
 from html import escape as html_escape
 from pathlib import Path
 
@@ -26,6 +27,7 @@ SKIP_LABELS = set(P["skip_labels"])
 PLACEHOLDER_ISSUES = set(P["placeholder_issues"])  # e.g. a PR template's "Fixes #12345" example, left in many bodies
 MECHANICAL = re.compile(P["mechanical"])
 GH = re.escape(P["github"])
+TESTS_RE = re.compile(P["tests_re"]) if P.get("tests_re") else None  # a PR's test files; else those under tests/
 
 
 def git(*args):
@@ -87,7 +89,12 @@ def quote_source(url):
     m = re.match(rf"https://github\.com/{GH}/blob/{re.escape(P['base_branch'])}/([^#]+)", url or "")
     if m:
         return git("show", f"{MASTER}:{m.group(1)}")
-    return None
+    # a document outside the repository the profile's quote_sources name, as the fetch stage read it this build
+    name = QUOTED.get(url or "")
+    return (G / "quotes" / name).read_text() if name else None
+
+
+QUOTED = json.loads((G / "quotes.json").read_text()) if (G / "quotes.json").exists() else {}
 
 
 QUOTE_DRIFT = []
@@ -183,6 +190,16 @@ for n, b in bodies.items():
 
 needs_rebase = set(findings["summary"]["conflict_with_master"])
 master_conf = {int(k): v for k, v in findings.get("master_conflicts", {}).items()}
+# a PR aimed at a release branch needs a rebase when it conflicts with that branch; a conflict further up the chain is
+# for whoever merges up to resolve, and is shown on its card instead
+merge_up = {int(k): v for k, v in findings.get("merge_up", {}).items()}
+for n, m in merge_up.items():
+    own = m["path"][0]["conflicts"]
+    needs_rebase.discard(n)
+    master_conf.pop(n, None)
+    if own:
+        needs_rebase.add(n)
+        master_conf[n] = own
 
 # --- streams ----------------------------------------------------------------------------------------------
 out_streams = []
@@ -220,7 +237,8 @@ for s in streams["streams"]:
             counts.append({"label": msr["label"], "checklist": {"done": done, "total": done + todo}})
             continue
         counts.append({"label": msr["label"], "by_release": [{"tag": tag_info[t]["name"], "value": measure(msr, t)} for t in TAGS]})
-    out_streams.append({**{k: s[k] for k in ("id", "title", "summary", "target", "before") if k in s},
+    # an area that quotes no target or gives no advice before building has empty lists, not none: the page reads both
+    out_streams.append({"target": [], "before": [], **{k: s[k] for k in ("id", "title", "summary", "target", "before") if k in s},
                         **{k: s[k] for k in ("keys_leaving", "keys_heading", "removals") if k in s},
                         "plan": plan, "inflight": sorted(inflight, key=lambda x: -x["n"]), "measures": counts})
 cache_f.write_text(json.dumps(cache))
@@ -253,9 +271,13 @@ mech = sorted(((f, len(ns)) for f, ns in per_file.items() if MECHANICAL.match(f)
 
 # --- per-PR record for the lookup -------------------------------------------------------------------------
 conf_with = defaultdict(list)
+# With "stale_conflicts": "apart", a code conflict found branch to branch (one of the two needs a rebase onto the base
+# first) is its own kind: shown on both cards, but neither joining a group nor counting against the PR that merges.
+# On php-src it joined 312 PRs into one group through PRs that conflict with their base; left apart, the largest is 28.
+STALE_APART = P.get("stale_conflicts") == "apart"
 for x in findings["text_conflict"]:
     a, b = x["prs"]
-    kind = "code" if x["code"] else "mechanical"
+    kind = ("after a rebase" if STALE_APART and x["how"] == "branch to branch" else "code") if x["code"] else "mechanical"
     conf_with[a].append({"n": b, "kind": kind, "files": x["code"] or x["mechanical"]})
     conf_with[b].append({"n": a, "kind": kind, "files": x["code"] or x["mechanical"]})
 semantic = defaultdict(list)
@@ -328,6 +350,73 @@ for i, ns in same_issue.items():
 BREAK = re.compile(r"^(changes |removes |deletes |calls |its |changes .*, which)")
 today = date.today()
 
+
+# --- owners: whom GitHub asks to review each PR, by the CODEOWNERS file on the PR's own target branch (php-src's
+# PHP-8.2 has 64 rules, master 69). A pattern works as in .gitignore: a leading / anchors it at the root, a pattern
+# with no / matches at any depth, and a directory covers what is under it. For each file the last matching rule wins.
+def codeowners_regex(pattern):
+    anchored = pattern.startswith("/") or "/" in pattern.rstrip("/")
+    p, rx, i = pattern.strip("/"), "", 0
+    while i < len(p):
+        if p.startswith("**/", i):
+            rx, i = rx + "(?:.*/)?", i + 3
+        elif p.startswith("**", i):
+            rx, i = rx + ".*", i + 2
+        elif p[i] == "*":
+            rx, i = rx + "[^/]*", i + 1
+        elif p[i] == "?":
+            rx, i = rx + "[^/]", i + 1
+        else:
+            rx, i = rx + re.escape(p[i]), i + 1
+    return re.compile(("^" if anchored else "^(?:.*/)?") + rx + "(?:/.*)?$")
+
+
+def codeowners_rules(rev):
+    """[(regex, owners)] from the first CODEOWNERS GitHub reads at rev, in file order."""
+    for path in (".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"):
+        text = git("show", f"{rev}:{path}")
+        if text:
+            rules = []
+            for line in text.splitlines():
+                parts = line.split("#", 1)[0].split()
+                if len(parts) > 1:
+                    rules.append((codeowners_regex(parts[0]), [o for o in parts[1:] if o.startswith("@") or "@" in o]))
+            return rules
+    return []
+
+
+def owners_of(files, rules):
+    out = set()
+    for f in files:
+        hit = None
+        for rx, owners in rules:
+            if rx.match(f):
+                hit = owners
+        out |= set(hit or [])
+    return sorted(out)
+
+
+RULES = {}
+if P.get("codeowners", True):
+    for b in {m_.get("baseRefName") or P["base_branch"] for m_ in meta.values()}:
+        RULES[b] = codeowners_rules(MASTER if b == P["base_branch"] else f"{P['remote']}/{b}")
+owners = {n: owners_of(prs_git.get(n, {}).get("files", {}), RULES.get(m_.get("baseRefName") or P["base_branch"], [])) for n, m_ in meta.items()}
+
+# --- one fix opened twice: the same title and a file in common outside the mechanical ones. php-src opens a fix on a
+# release branch and again on master under one title (#24102 on PHP-8.6, #24103 on master).
+by_title = defaultdict(list)
+for n, m_ in meta.items():
+    if n not in skip:
+        by_title[" ".join(m_["title"].lower().split())].append(n)
+same_title_of, twins = defaultdict(set), []
+for t, ns in by_title.items():
+    for a, b in combinations(sorted(ns), 2):
+        shared = sorted((set(pr_files.get(a, [])) & set(pr_files.get(b, []))) - {f for f in pr_files.get(a, []) if MECHANICAL.match(f)})
+        if shared:
+            same_title_of[a].add(b)
+            same_title_of[b].add(a)
+            twins.append({"title": meta[a]["title"].strip(), "prs": [a, b], "bases": [meta[a].get("baseRefName"), meta[b].get("baseRefName")], "files": shared[:3]})
+
 prs_out = {}
 for n, m in meta.items():
     e = extra.get(n, {})
@@ -347,7 +436,9 @@ for n, m in meta.items():
            "created": m["createdAt"][:10], "updated": m["updatedAt"][:10],
            "age": (today - date.fromisoformat(m["createdAt"][:10])).days,
            "files": len(prs_git.get(n, {}).get("files", {})), "add": e.get("additions"), "del": e.get("deletions"),
-           "tests": sum(1 for f in prs_git.get(n, {}).get("files", {}) if f.startswith("tests/")),
+           "tests": sum(1 for f in prs_git.get(n, {}).get("files", {}) if (TESTS_RE.search(f) if TESTS_RE else f.startswith("tests/"))),
+           "base": m.get("baseRefName") or P["base_branch"],
+           "merge_up": [{"branch": x["branch"], "conflicts": x["conflicts"][:8]} for x in merge_up[n]["path"][1:] if x["conflicts"]] if n in merge_up else [],
            "mass": n in mass, "rebase": n in needs_rebase, "rebase_files": master_conf.get(n, [])[:8],
            "conflicts": conf_with.get(n, []), "interacts": interacts,
            "breaks": sum(1 for i in interacts if BREAK.match(i["what"])),
@@ -360,6 +451,9 @@ for n, m in meta.items():
            "claim_taken": n in vc["taken"], "no_bump": n in vc["no_bump"],
            "caps_alone": caps_alone.get(n, []), "caps_with": caps_with.get(n, []),
            "same_issue": sorted(same_issue_of.get(n, [])),
+           "same_title": sorted(same_title_of.get(n, [])),
+           "owners": owners.get(n, []),
+           "labels": labels_of.get(n, []),
            "head": prs_git.get(n, {}).get("head", ""),
            "stale_sql": findings.get("stale_upgrade", {}).get("prs", {}).get(str(n), [])}
     prs_out[n] = rec
@@ -378,11 +472,12 @@ data = {
     "conformance": {**{k: v for k, v in CONF.items() if k not in ("specs", "controls", "_about", "issues")}, "specs": conf_specs,
                     "reported": conf_reported.get("_general"),
                     "controls_passed": len(CONF.get("controls", [])) - len(conf_notes)} if CONF.get("specs") else None,
-    "duplicates": {"same_issue": dups, "shared_names": findings["shared_name"],
+    "duplicates": {"same_issue": dups, "same_title": twins, "shared_names": findings["shared_name"],
                    "stacked": findings["stacked"]},
     "merge": {"needs_rebase": len(needs_rebase), "needs_rebase_mechanical_only": rebase_mech,
               "pairs_sharing_a_file": findings["summary"]["pairs_sharing_a_file"],
-              "conflict_pairs_code": sum(1 for x in findings["text_conflict"] if x["code"]),
+              "conflict_pairs_code": sum(1 for x in findings["text_conflict"] if x["code"] and not (STALE_APART and x["how"] == "branch to branch")),
+              "conflict_pairs_after_rebase": sum(1 for x in findings["text_conflict"] if x["code"] and STALE_APART and x["how"] == "branch to branch"),
               "conflict_pairs_mechanical": sum(1 for x in findings["text_conflict"] if not x["code"]),
               "mechanical_files": mech, "impact": impact,
               "baseline_deletion": [{"deletes": x["deletes"], "changed_by": x["changes"], "file": x["files"][0]} for x in findings["deleted_changed"] if x["mechanical"]],
@@ -411,6 +506,10 @@ data["profile"]["caps_noun"] = (P.get("exact_caps") or {}).get("noun", "lint cap
 data["profile"]["caps_file"] = (P.get("exact_caps") or {}).get("file")
 data["profile"]["version_file"] = (P.get("version_claims") or {}).get("file")
 data["profile"]["resource_label"] = P["anchors"].get("resource_label")
+data["profile"]["merge_up"] = P.get("merge_up") or []
+data["profile"]["pair_files"] = P.get("pair_files") or "all"
+data["profile"]["landings"] = P.get("landings") or "merge"
+data["merge_up"] = findings["summary"].get("merge_up")
 data["general_heading"] = streams.get("general_heading")
 data["controls"] = json.loads((W / "controls-result.json").read_text()) if (W / "controls-result.json").exists() else []
 # open PRs aimed at another branch (a release branch's backports): named, not compared, since they merge elsewhere
@@ -466,6 +565,8 @@ for n, p in prs_out.items():
                 link(n, t, "break")
     for m_ in p["same_issue"]:
         link(n, m_, "same issue")
+    for m_ in p["same_title"]:
+        link(n, m_, "same title")
 for x in findings["stacked"]:
     link(x["in"], x["contained"], "stacked")
 for x in findings["shared_name"]:
@@ -534,6 +635,22 @@ def blockers(n, p):
 
 for n, p in prs_out.items():
     p["shortlist"] = not blockers(n, p)
+
+# --- status labels the build disagrees with: the profile's status_labels name what a label says a PR waits on.
+# "review": labelled ready for reviewers, while something the author must fix first stands in the way; "author":
+# labelled waiting on its author, while nothing these checks can see blocks it. On php-src all 15 PRs labelled
+# "Waiting on Review" were 3 to 7 years old, none with CI on its head and 12 needing a rebase.
+STATUS = P.get("status_labels") or {}
+label_gaps = []
+for n, p in sorted(prs_out.items(), key=lambda x: -x[1]["age"]):
+    for label, waits_on in STATUS.items():
+        if label not in p["labels"]:
+            continue
+        why = blockers(n, p)
+        if waits_on == "review" and why:
+            label_gaps.append({"n": n, "label": label, "says": "ready for review", "but": why})
+        elif waits_on == "author" and not why:
+            label_gaps.append({"n": n, "label": label, "says": "waiting on its author", "but": ["nothing these checks can see blocks it"]})
 code_pairs = {tuple(sorted((n, c["n"]))) for n, p in prs_out.items() for c in p["conflicts"] if c["kind"] == "code"}
 snapshot = {"at": datetime.now().isoformat(timespec="seconds"), "master": master_sha,
             "prs": {n: {"t": p["t"], "by": p["by"], "draft": p["draft"], "ci": p["ci"], "rebase": p["rebase"], "maint": p["maint"],
@@ -546,6 +663,20 @@ cutoff = datetime.now() - timedelta(hours=float(os.environ.get("WIM_SINCE_HOURS"
 # the newest snapshot old enough; before a day of history exists, the oldest one (the page states its time)
 base_f = next((f for f in reversed(older) if datetime.fromisoformat(json.loads(f.read_text())["at"]) <= cutoff), older[0] if older else None)
 data["since"] = None
+
+
+def closed_by_commit(n):
+    """The committer of the commit that closed PR n, or None when no commit closed it (php-src lands most PRs this way)."""
+    q = ('query($n: Int!) { repository(owner: "%s", name: "%s") { pullRequest(number: $n) { timelineItems(itemTypes: [CLOSED_EVENT], last: 1) '
+         '{ nodes { ... on ClosedEvent { closer { __typename ... on Commit { committer { user { login } } } } } } } } } }') % (P["owner"], P["name"])
+    r = subprocess.run(["gh", "api", "graphql", "-f", f"query={q}", "-F", f"n={n}"], capture_output=True, text=True)
+    if r.returncode or not r.stdout.strip():
+        return None
+    nodes = json.loads(r.stdout)["data"]["repository"]["pullRequest"]["timelineItems"]["nodes"]
+    closer = (nodes[-1] if nodes else {}).get("closer") or {}
+    return ((closer.get("committer") or {}).get("user") or {}).get("login") or "" if closer.get("__typename") == "Commit" else None
+
+
 if base_f:
     before = json.loads(base_f.read_text())
     old = {int(k): v for k, v in before["prs"].items()}
@@ -560,6 +691,10 @@ if base_f:
                            capture_output=True, text=True)
         if r.returncode == 0 and r.stdout.strip() and json.loads(r.stdout)["state"] == "closed":
             fates[n] = json.loads(r.stdout)
+            if not fates[n]["merged"] and P.get("landings") == "merge+commit":
+                committer = closed_by_commit(n)
+                if committer is not None:  # landed by pushing its commits: merged, by the one who pushed them
+                    fates[n].update(merged=True, by=committer)
     both = set(old) & set(prs_out)
     old_pairs = {tuple(x) for x in before.get("code_pairs", [])}
     data["since"] = {
@@ -580,8 +715,46 @@ if base_f:
 for f in sorted(HIST.glob("*.json"))[:-30]:  # keep the newest 30
     f.unlink()
 
+data["labels_vs_build"] = {"labels": STATUS, "gaps": label_gaps}
+
+# --- the same records as data: one row per open PR (CSV for a spreadsheet, JSON for tools) and the groups, written
+# next to the page, which links them
+GH_URL = f"https://github.com/{P['github']}/pull/"
+records = []
+for n, p in sorted(prs_out.items()):
+    records.append({
+        "number": n, "url": GH_URL + str(n), "title": p["t"].strip(), "author": p["by"], "base": p["base"], "draft": p["draft"],
+        "created": p["created"], "updated": p["updated"], "age_days": p["age"], "files": p["files"], "additions": p["add"], "deletions": p["del"],
+        "tests_changed": p["tests"], "ci": p["ci"], "ci_failing": p["ci_failing"], "maintainer_review": p["maint"] or None, "maintainer_reviewer": p["maint_by"] or None,
+        "nothing_blocking": p["shortlist"], "blockers": blockers(n, p), "needs_rebase": p["rebase"], "rebase_files": p["rebase_files"],
+        "merge_up_conflicts": p["merge_up"], "over_file_limit": p["mass"],
+        "code_conflicts": sorted(c["n"] for c in p["conflicts"] if c["kind"] == "code"),
+        "conflicts_after_a_rebase": sorted(c["n"] for c in p["conflicts"] if c["kind"] == "after a rebase"),
+        "mechanical_conflicts": sorted(c["n"] for c in p["conflicts"] if c["kind"] == "mechanical"),
+        "breaks": p["breaks"], "group": p.get("group"), "same_issue": p["same_issue"], "same_title": p["same_title"],
+        "areas": p["streams"], "owners": p["owners"], "labels": p["labels"], "fixes": p["fixes"],
+        "changed_files": pr_files.get(n, []),
+    })
+stamp = {"repository": P["github"], "base_branch": P["base_branch"], "base_commit": master_sha, "generated": str(date.today()),
+         "tool": f"pr-toolbox motion {P.get('tool_version') or ''}".strip()}
+DATA = {"prs_json": f"{OUT.stem}-prs.json", "prs_csv": f"{OUT.stem}-prs.csv", "groups_json": f"{OUT.stem}-groups.json"}
+(OUT.parent / DATA["prs_json"]).write_text(json.dumps({"schema": "pr-toolbox motion prs 1", **stamp, "prs": records}, indent=1))
+(OUT.parent / DATA["groups_json"]).write_text(json.dumps({"schema": "pr-toolbox motion groups 1", **stamp, "groups": data["groups"]}, indent=1))
+import csv
+import io
+buf = io.StringIO()
+wr = csv.writer(buf)
+cols = [c for c in (records[0] if records else {}) if c != "changed_files"]  # file lists stay in the JSON
+wr.writerow(cols)
+for r in records:
+    wr.writerow(["; ".join(str(x) if not isinstance(x, dict) else f"{x['branch']}: {' '.join(x['conflicts'])}" for x in v) if isinstance(v, list)
+                 else "" if v is None else v for v in (r[c] for c in cols)])
+(OUT.parent / DATA["prs_csv"]).write_text(buf.getvalue())
+data["exports"] = DATA
+
 (W / "map.json").write_text(json.dumps(data))
 fill = {"%%TITLE%%": P["title"], "%%GITHUB%%": P["github"], "%%PROJECT%%": P["project"], "%%BASE%%": P["base_branch"],
+        "%%ONTO%%": "their own branch" if P.get("merge_up") else P["base_branch"],
         "%%MECH%%": P["mechanical_note"]}
 page = TEMPLATE.read_text()
 for k, v in fill.items():

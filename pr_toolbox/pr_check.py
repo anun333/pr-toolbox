@@ -76,8 +76,9 @@ class Check:
 
     def fill(self, text: str, files: list[str] | None = None, file: str | None = None) -> str:
         values = {"app_dir": self.app_dir, "workers": str(self.args.workers), "base": self.base,
-                  "files": quoted(files or []), "file": quoted([file]) if file else ""}
-        return re.sub(r"\{(app_dir|workers|base|files|file)\}", lambda m: values[m.group(1)], text)
+                  "files": quoted(files or []), "file": quoted([file]) if file else "",
+                  "profile_dir": quoted([self.config["_dir"]]) if self.config.get("_dir") else ""}  # a step's own script
+        return re.sub(r"\{(app_dir|workers|base|files|file|profile_dir)\}", lambda m: values[m.group(1)], text)
 
     def command_step(self, step: dict) -> tuple[str, str]:
         pattern = step.get("each") or step.get("files")

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.8.1 (2026-10-25)
+
+Fixes found on OpenEMR's 8.5.0 branch cut, when every open PR that had added SQL to the upgrade file for 8.5.0 was suddenly adding it where no site on 8.5.0 would run it.
+
+- **`motion`: upgrade SQL only in an earlier release's file keeps a PR out of Nothing blocking.** A branch cut leaves every open PR written for the file the cut closed with SQL that a site on the new release never runs. OpenEMR's page listed several such PRs as nothing blocking. A PR that also changes the current file, a fix to the old upgrade path plus the current one, still blocks nothing. Its card says which case it is. New OpenEMR control: #7279.
+- **`landing`: three lines that read clean when they weren't.**
+  - A PR that no longer merged onto the base branch was called "independent. No open PR conflicts with it." It now says it needs a rebase.
+  - Two PRs taking the same version number merge cleanly as text, so neither was named. Whichever lands second must still renumber, or a site already at that number is never asked to upgrade again. The line now names the other PR.
+  - `--rewrite` writes from the last check. Run right after a push, it wrote the facts from before the push. It now stops, names the PR that moved, and says to check first.
+- **`check`: version-claims named the branch's own PR** once the branch had local commits on top, or had been rebased. It now skips a PR whose head is this branch as pushed to any remote, a PR this branch is built on, and a PR built on it.
+- **`check`, OpenEMR preset: Rector skips `.phpstan/`.** rector.php's paths leave it out, and Rector spent over ten minutes on PHPStan's generated baseline arrays.
+
 ## 0.8.0 (2026-10-25)
 
 The php-src work, merged and released: the page of every repository gained its Queues section, folded closed so a page stays a read of one sitting.

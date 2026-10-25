@@ -135,6 +135,29 @@ class LandingOrderTest(unittest.TestCase):
         self.assertTrue(line.startswith("**Landing order:** independent. No open PR conflicts with it."))
         self.assertIn("against master 7846cf5c12 and every open PR", line)
 
+    def test_a_pr_that_no_longer_merges_onto_the_base_is_not_called_independent(self):
+        line = landing_order.sentence("1", entry(conflicts_with_master=["version.php", "sql/8_4_1-to-8_5_0_upgrade.sql"]), RESULT, {})
+        self.assertNotIn("independent", line)
+        self.assertIn("It no longer merges onto master (in `version.php`, `sql/8_4_1-to-8_5_0_upgrade.sql`), so it needs a rebase", line)
+
+    def test_the_same_number_without_a_text_conflict_is_named(self):
+        e = entry(v_database=556, same_claim=[14806])
+        self.assertIn("It takes `v_database` 556, and #14806 takes the same number, which merges cleanly as text, so whichever lands second needs the next one",
+                      landing_order.sentence("1", e, RESULT, {}))
+        e = entry(v_database=556, same_claim=[14806], conflicts={"20": ["version.php", "sql/database.sql"]})
+        self.assertIn("it conflicts with #20 only over that number (in `version.php` and the files that go with it), and #14806 takes the same number",
+                      landing_order.sentence("1", e, RESULT, {}))
+        self.assertNotEqual(entry(v_database=556)["key"], e["key"], "a new sharer changes the facts")
+        self.assertEqual(entry(v_database=556)["key"], entry(v_database=556, same_claim=[])["key"], "keys of PRs without one don't move")
+
+    def test_a_rewrite_refuses_a_pr_that_moved_since_the_check(self):
+        result = dict(RESULT, ours={"1": entry(head="a" * 40)})
+        with mock.patch.object(landing_order, "gh", return_value='{"head": {"sha": "' + "b" * 40 + '"}, "body": "x"}') as gh:
+            with self.assertRaises(common.ToolError) as raised:
+                landing_order.rewrite(["1"], result, {}, Path(tempfile.mkdtemp()), "openemr/openemr")
+        self.assertIn("#1 moved since the last check (aaaaaaaaaa then, bbbbbbbbbb now)", str(raised.exception))
+        self.assertEqual(1, gh.call_count, "nothing was written")
+
     def test_version_conflicts_are_grouped_and_others_named(self):
         e = entry(v_database=558, conflicts={"20": ["version.php", "sql/database.sql"], "30": ["src/Foo.php"]})
         line = landing_order.sentence("1", e, RESULT, {})

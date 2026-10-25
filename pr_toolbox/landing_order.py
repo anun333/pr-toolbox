@@ -22,7 +22,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .common import (Target, add_target_arguments, caps_mismatches, current_login, fetch_prs, gh, gh_json, git,
+from .common import (Target, ToolError, add_target_arguments, caps_mismatches, current_login, fetch_prs, gh, gh_json, git,
                      is_version_conflict, matches, merged, open_prs, resolve, version_claim)
 
 LINE_START = "**Landing order"
@@ -89,6 +89,13 @@ def check(target: Target, author: str) -> dict:
         claim = version_claim(repo, f"{target.remote}/pr/{n}", versions)
         if claim is not None:
             claims.setdefault(str(claim), []).append(n)
+    # the same number taken by another open PR: the same edit merges cleanly as text, but whichever lands
+    # second still needs the next number, or a site already at it is never asked to upgrade again
+    for n, entry in facts.items():
+        same = [o for o in claims.get(str(entry["v_database"]), []) if str(o) != n] if entry["v_database"] is not None else []
+        if same:
+            entry["same_claim"] = same
+            entry["key"] = fact_key(entry)
     return {"checked": datetime.now(timezone.utc).isoformat(timespec="seconds"), "master": base, "base_branch": target.base_branch,
             "github": target.github, "author": author, "open_prs": len(prs), "ours": facts,
             "v_database_claims": dict(sorted(claims.items(), key=lambda kv: int(kv[0]))),
@@ -105,6 +112,8 @@ def ignored(path: str, config: dict) -> bool:
 def fact_key(entry: dict) -> str:
     """What decides whether a PR's line changes: not its wording, and not the date."""
     facts = {k: entry[k] for k in ("v_database", "conflicts_with_master", "conflicts", "caps")}
+    if entry.get("same_claim"):
+        facts["same_claim"] = entry["same_claim"]
     return hashlib.sha256(json.dumps(facts, sort_keys=True).encode()).hexdigest()[:12]
 
 
@@ -118,21 +127,27 @@ def sentence(n: str, entry: dict, result: dict, notes: dict) -> str:
     conflicts = {o: f for o, f in entry["conflicts"].items() if o not in stacked}
     rule = {"file": result["version_file"], "related": result.get("version_related") or [result["version_file"]]} if result.get("version_file") else None
     version = {o for o, f in conflicts.items() if is_version_conflict(f, rule)}
+    same = sorted({str(o) for o in entry.get("same_claim", [])} - stacked - version, key=int)
     other = {o: f for o, f in conflicts.items() if o not in version}
+    branch = result.get("base_branch", "master")
     stamp = (f"test-merged on {result['checked'][:10]} against {result.get('base_branch', 'master')} {result['master'][:10]} "
              "and every open PR that changes any of the same files")
     parts = [note.get("prefix") or f"{LINE_START}:**"]
-    if not conflicts and not entry["caps"] and not carries:
+    if entry["conflicts_with_master"]:
+        parts.append(f"It no longer merges onto {branch} (in {', '.join(f'`{f}`' for f in entry['conflicts_with_master'][:4])}), "
+                     "so it needs a rebase before anything else here holds; I'll rebase it.")
+    elif not conflicts and not entry["caps"] and not carries and not same:
         parts.append("independent. No open PR conflicts with it.")
     if note.get("carries_text"):
         parts.append(note["carries_text"])
     if version and note.get("sql_text"):
         parts.append(note["sql_text"])
-    elif version:
-        listed = ", ".join(f"#{o}" for o in sorted(version, key=int))
+    elif version or same:
         noun, file = result.get("version_noun", "version number"), result.get("version_file", "")
-        parts.append(f"It takes {noun} {entry['v_database']}, and it conflicts with {listed} only over that number (in `{file}` and the "
-                     "files that go with it), so whichever lands second needs the next one; I'll renumber this one.")
+        bits = [f"it conflicts with {', '.join(f'#{o}' for o in sorted(version, key=int))} only over that number (in `{file}` and the files that go with it)"] if version else []
+        if same:
+            bits.append(f"{', '.join(f'#{o}' for o in same)} {'takes' if len(same) == 1 else 'take'} the same number, which merges cleanly as text")
+        parts.append(f"It takes {noun} {entry['v_database']}, and " + ", and ".join(bits) + ", so whichever lands second needs the next one; I'll renumber this one.")
     for o, files in sorted(other.items(), key=lambda kv: int(kv[0])):
         parts.append(f"It conflicts with #{o} in {', '.join(f'`{f}`' for f in files)}. Either can land first, and if #{o} does, I'll rebase this one.")
     for o in entry["caps"]:
@@ -165,7 +180,11 @@ def rewrite(numbers: list[str], result: dict, notes: dict, scratch: Path, github
     adds one. Only the PRs named, which are expected to be the author's own."""
     done = []
     for n in numbers:
-        body = gh("api", f"repos/{github}/pulls/{n}", "--jq", ".body")
+        pr = json.loads(gh("api", f"repos/{github}/pulls/{n}"))
+        if pr["head"]["sha"] != result["ours"][n]["head"]:
+            raise ToolError(f"#{n} moved since the last check ({result['ours'][n]['head'][:10]} then, {pr['head']['sha'][:10]} now): "
+                            "run a check first, then rewrite")
+        body = pr["body"] or ""
         line = sentence(n, result["ours"][n], result, notes)
         if body.startswith(LINE_START):
             end = body.find("\n\n")
@@ -247,7 +266,11 @@ def main(argv: list[str] | None = None) -> int:
         for n in args.show or []:
             print(f"#{n}: {sentence(n, previous['ours'][n], previous, notes)}\n")
         if args.rewrite:
-            done = rewrite([n for n in args.rewrite if n in previous["ours"]], previous, notes, paths.state, previous["github"])
+            try:
+                done = rewrite([n for n in args.rewrite if n in previous["ours"]], previous, notes, paths.state, previous["github"])
+            except ToolError as error:
+                print(f"landing: {error}", file=sys.stderr)
+                return 1
             print(json.dumps({"rewritten": done}))
         return 0
     target = resolve(args)

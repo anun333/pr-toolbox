@@ -181,9 +181,14 @@ class Check:
             return "skip", f"{rule['file']} unchanged"
         mine = self.working_claim(rule)
         head = git(self.repo, "rev-parse", "HEAD").stdout.strip()
+        # this branch as it is and as pushed to any remote (a rebase leaves the pushed head out of HEAD's history)
+        branch = git(self.repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+        ours = {head} | (set(git(self.repo, "for-each-ref", "--format=%(objectname)", f"refs/remotes/*/{branch}").stdout.split()) if branch != "HEAD" else set())
         clashes = []
         for pr in open_prs(self.target.github):
-            if rule["file"] not in pr["paths"] or pr["headRefOid"] == head:
+            # this branch's own PR, a PR it is built on, or one built on it: the same claim by design
+            theirs = pr["headRefOid"]
+            if rule["file"] not in pr["paths"] or theirs in ours or any(self.ancestor(theirs, m) or self.ancestor(m, theirs) for m in ours):
                 continue
             text = gh("api", f"repos/{self.target.github}/contents/{rule['file']}?ref={pr['headRefOid']}", "-H", "Accept: application/vnd.github.raw")
             claim = re.search(rule["pattern"], text)
@@ -191,6 +196,10 @@ class Check:
                 clashes.append(f"#{pr['number']} ({pr['author']})")
         noun = rule.get("noun", "version")
         return ("fail", f"{noun} {mine} is also claimed by " + ", ".join(clashes)) if clashes else ("pass", f"no other open PR claims {mine}")
+
+    def ancestor(self, older: str, newer: str) -> bool:
+        """Whether `newer` is built on `older` (false when either isn't in the checkout at all)."""
+        return git(self.repo, "merge-base", "--is-ancestor", older, newer).returncode == 0
 
     def secrets(self) -> tuple[str, str]:
         if not self.args.secrets_env:

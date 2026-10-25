@@ -263,6 +263,33 @@ class PrCheckTest(unittest.TestCase):
         self.assertEqual("pass", self.check_for(repo).version()[0])
         self.assertEqual("skip", self.check_for(repo, config={}).version()[0], "no profile, no version rule")
 
+    def test_a_claim_clashes_with_other_prs_but_not_the_branchs_own_or_one_it_is_built_on(self):
+        repo = self.branch({"version.php": "<?php\n$v_database = 556;\n", "sql/database.sql": "-- v_database: 556\n"})
+        pushed = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+        commit(repo, {"a.php": "<?php\n"}, "a commit on top, not pushed yet")
+        prs = [{"number": 1, "author": "me", "headRefOid": pushed, "paths": ["version.php"]},           # this branch's own PR
+               {"number": 2, "author": "them", "headRefOid": "f" * 40, "paths": ["version.php"]}]       # another PR, not in our history
+        with mock.patch.object(pr_check, "open_prs", return_value=prs), \
+                mock.patch.object(pr_check, "gh", return_value="<?php\n$v_database = 556;\n"):
+            self.assertEqual(("fail", "`v_database` 556 is also claimed by #2 (them)"), self.check_for(repo).version_claims())
+        with mock.patch.object(pr_check, "open_prs", return_value=prs[:1]), \
+                mock.patch.object(pr_check, "gh", return_value="<?php\n$v_database = 556;\n"):
+            self.assertEqual("pass", self.check_for(repo).version_claims()[0], "its own PR's earlier head is no clash")
+        # rebased: the pushed head is no longer in HEAD's history, but the remote-tracking branch still names it
+        subprocess.run(["git", "-C", str(repo), "update-ref", "refs/remotes/fork/work", pushed], check=True)
+        subprocess.run(["git", "-C", str(repo), "reset", "-q", "--hard", "master"], check=True)
+        commit(repo, {"version.php": "<?php\n$v_database = 556;\n", "sql/database.sql": "-- v_database: 556\n", "b.php": "<?php\n"}, "rebased")
+        subprocess.run(["git", "-C", str(repo), "checkout", "-q", "-b", "stacked", pushed], check=True)
+        commit(repo, {"c.php": "<?php\n"}, "another PR, built on the branch as it was pushed")
+        stacked = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+        subprocess.run(["git", "-C", str(repo), "checkout", "-q", "work"], check=True)
+        own_and_stacked = [{"number": 1, "author": "me", "headRefOid": pushed, "paths": ["version.php"]},
+                           {"number": 3, "author": "me", "headRefOid": stacked, "paths": ["version.php"]}]
+        with mock.patch.object(pr_check, "open_prs", return_value=own_and_stacked + prs[1:]), \
+                mock.patch.object(pr_check, "gh", return_value="<?php\n$v_database = 556;\n"):
+            self.assertEqual(("fail", "`v_database` 556 is also claimed by #2 (them)"), self.check_for(repo).version_claims(),
+                             "after a rebase, its own PR and one built on it are no clash; another PR still is")
+
     def test_project_steps_run_on_the_host_with_their_files(self):
         repo = self.branch({"a.txt": "fine\n", "b.txt": "bad word\n", "c.md": "bad\n"})
         steps = {"check_steps": [

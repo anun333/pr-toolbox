@@ -84,6 +84,10 @@
       "name": "rector",
       "where": "container",
       "files": "*.php",
+      "exclude": [
+        ".phpstan/*"
+      ],
+      "exclude_note": "rector.php's withPaths leave out .phpstan/, whose baseline files are large generated arrays: CI never runs Rector on them",
       "run": "vendor/bin/rector process --dry-run --no-progress-bar {files}",
       "fail_pattern": "would have (been )?changed|\\d+ files? with changes"
     },

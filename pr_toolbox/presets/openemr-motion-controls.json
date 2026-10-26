@@ -2,15 +2,15 @@
   "_about": "Known cases each check must find (or must not flag). A control whose PRs are no longer all open is retired, not failed; replace it with a current case when that happens.",
   "controls": [
     {
-      "name": "signature: #14443's FhirServiceBase return types refuse #14708's override",
+      "name": "signature: #14443's FhirServiceBase return types refuse #14309's FhirClaimService overrides",
       "prs": [
         14443,
-        14708
+        14309
       ],
       "in": "signature",
       "match": {
         "changes": 14443,
-        "overrides": 14708
+        "overrides": 14309
       }
     },
     {

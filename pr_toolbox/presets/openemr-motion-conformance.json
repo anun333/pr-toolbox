@@ -31,7 +31,8 @@
         "SMART App Launch 2.0.0, updated to 2.2.0",
         "Bulk Data Access 1.0.0, updated to 2.0.0",
         "USCDI v3, updated to v5",
-        "OpenID Connect Core 1.0"
+        "OpenID Connect Core 1.0",
+        "Next: US Core 9.0.0 (USCDI v6, published 2026-05-31), which SVAP allows from 2026-08-29; USCDI v3 stays the floor"
       ],
       "standards_source": "the CHPL listing (standards and SVAP updates)",
       "paths": [
@@ -151,6 +152,84 @@
       ]
     },
     {
+      "id": "sdc",
+      "label": "SDC",
+      "title": "Questionnaires: HL7 Structured Data Capture",
+      "certified": false,
+      "kind": "HL7 implementation guide for the native questionnaire runtime; responses reach (g)(10) through US Core",
+      "standards": [
+        "SDC 4.0.0 on FHIR R4 4.0.1",
+        "US Core QuestionnaireResponse, for screening and assessment answers"
+      ],
+      "paths": [
+        "interface/forms/questionnaire_assessments/",
+        "src/Services/Questionnaire/",
+        "src/Services/QuestionnaireService.php",
+        "src/Services/QuestionnaireResponseService.php",
+        "src/Services/FHIR/Questionnaire/",
+        "src/Services/FHIR/QuestionnaireResponse/",
+        "src/Common/Forms/FormQuestionnaireAssessment.php",
+        "portal/questionnaire_render.php"
+      ],
+      "title_re": "(?i)questionnaire|\\bsdc\\b|enablewhen|fhirpath",
+      "tool": {
+        "name": "the HL7 FHIR validator with the SDC package",
+        "url": "https://github.com/hapifhir/org.hl7.fhir.core",
+        "before_merge": true
+      },
+      "hti5": {
+        "action": "kept",
+        "note": "SDC isn't a criterion; US Core's QuestionnaireResponse rides on (g)(10), which is kept"
+      },
+      "known": [
+        {
+          "text": "SDC launchContext: the runtime reads %patient and %encounter, but no host page passes them yet, so expressions using them come out empty.",
+          "url": "https://github.com/openemr/openemr/issues/13266",
+          "kind": "issue"
+        }
+      ],
+      "issues": {
+        "query": "in:title questionnaire"
+      },
+      "mapping": "provisional"
+    },
+    {
+      "id": "ucum",
+      "label": "UCUM",
+      "title": "Units of measure (UCUM)",
+      "certified": false,
+      "kind": "the units vocabulary US Core and C-CDA name (170.207(m)(1)), not a criterion of its own",
+      "standards": [
+        "UCUM, the Unified Code for Units of Measure",
+        "US Core vital signs and laboratory results, through (g)(10); C-CDA results, through (b)(1)"
+      ],
+      "paths": [
+        "src/Cqm/Cql/Ucum/",
+        "interface/forms/vitals/",
+        "src/Services/VitalsService.php"
+      ],
+      "title_re": "(?i)\\bucum\\b|units? of measure",
+      "tool": {
+        "name": "core's UCUM engine tests (tests/Tests/Isolated/Cqm/Cql)",
+        "before_merge": true
+      },
+      "hti5": {
+        "action": "kept",
+        "note": "UCUM isn't a criterion; the criteria that name it, (g)(10) and (b)(1), are kept and revised"
+      },
+      "known": [
+        {
+          "text": "Use UCUM as OpenEMR's unit-of-measure vocabulary.",
+          "url": "https://github.com/openemr/openemr/issues/14698",
+          "kind": "issue"
+        }
+      ],
+      "issues": {
+        "query": "in:title UCUM OR unit"
+      },
+      "mapping": "provisional"
+    },
+    {
       "id": "b1",
       "label": "(b)(1)",
       "title": "Transitions of care (C-CDA)",
@@ -265,7 +344,9 @@
       "kind": "ONC criteria",
       "standards": [
         "eCQMs CMS22, CMS69, CMS122, CMS124, CMS125, CMS127, CMS130, CMS138, CMS147, CMS165",
-        "QRDA Category I (170.205(h)(2)) and Category III"
+        "QRDA Category I (170.205(h)(2)) and Category III",
+        "QDM 5.6 and CQL 1.5 for the 2027 performance period (eCQI)",
+        "Later: QI-Core and FHIR-based digital quality measures (dQMs)"
       ],
       "paths": [
         "src/Cqm/",
@@ -302,8 +383,14 @@
           "text": "An audit of the QDM data layer: records the measures count that OpenEMR treats as deleted or wrong.",
           "url": "https://github.com/openemr/openemr/issues/14671",
           "kind": "issue"
+        },
+        {
+          "text": "Modernize the CQM and clinical rules tables (NQF codes, program-year flags, no CMS eCQM ids).",
+          "url": "https://github.com/openemr/openemr/issues/11128",
+          "kind": "issue"
         }
-      ]
+      ],
+      "note": "CMS's stated goals, not yet rules: QDM eCQMs and FHIR dQMs accepted side by side in 2027 and 2028, FHIR only in 2029 and 2030 (as summarized in #14444). ONC's certification still requires QDM and QRDA."
     },
     {
       "id": "cpoe",
@@ -504,13 +591,14 @@
     },
     {
       "id": "pubhealth",
-      "label": "(f)(1), (f)(2)",
-      "title": "Immunization registries and syndromic surveillance (HL7 v2)",
+      "label": "(f)(1)–(f)(3)",
+      "title": "Public health reporting: immunization registries, syndromic surveillance, lab reporting (HL7 v2.5.1)",
       "certified": false,
       "kind": "ONC criteria, not in OpenEMR 8's certification",
       "standards": [
-        "CDC's HL7 v2.5.1 implementation guide for immunization messaging",
-        "PHIN syndromic surveillance messaging guide"
+        "CDC's HL7 v2.5.1 implementation guide for immunization messaging (VXU updates, QBP/RSP queries)",
+        "PHIN syndromic surveillance messaging guide (HL7 v2.5.1 ADT)",
+        "HL7 v2.5.1 electronic laboratory reporting to public health, for (f)(3): no code for it in OpenEMR, so it is matched by title only"
       ],
       "paths": [
         "interface/modules/zend_modules/module/Immunization/",
@@ -518,7 +606,7 @@
         "interface/reports/immunization_report.php",
         "interface/modules/zend_modules/module/Application/src/Application/Helper/SendToHieHelper.php"
       ],
-      "title_re": "(?i)syndromic|immunization registr|\\biis\\b",
+      "title_re": "(?i)syndromic|immunization registr|\\biis\\b|reportable lab|\\belr\\b|lab report(ing)? to public health",
       "tool": {
         "name": "NIST HL7 v2 validators",
         "before_merge": true
@@ -562,7 +650,44 @@
       "mapping": "provisional",
       "issues": {
         "label": "e-Prescribe"
-      }
+      },
+      "standards": [
+        "NCPDP SCRIPT 2023011, the only version that qualifies from 2028-01-01 (HTI-4)",
+        "(b)(4) real-time prescription benefit (NCPDP RTPB), which anyone certified to (b)(3) must also certify to, and which joins the Base EHR definition on 2028-01-01"
+      ],
+      "deadline": "HTI-4: NCPDP SCRIPT 2023011 and (b)(4) real-time prescription benefit from 2028-01-01",
+      "url": "https://www.federalregister.gov/d/2025-14681"
+    },
+    {
+      "id": "pa",
+      "label": "(g)(31)–(g)(33)",
+      "title": "Prior authorization APIs (Da Vinci CRD, DTR, PAS)",
+      "certified": false,
+      "kind": "ONC criteria (HTI-4), not in OpenEMR 8's certification",
+      "standards": [
+        "Da Vinci CRD, DTR and PAS 2.0.1, the versions ONC adopted (the guides are at 2.2.x)",
+        "CDS Hooks 2.0, for (j)(20), and Subscriptions R5 Backport 1.1.0, for (j)(21)"
+      ],
+      "paths": [
+        "interface/forms/prior_auth/",
+        "interface/modules/custom_modules/oe-module-prior-authorizations/"
+      ],
+      "title_re": "(?i)prior auth|da vinci|\\bcrd\\b|\\bdtr\\b|cds hooks",
+      "tool": {
+        "name": "Inferno's Da Vinci test kits",
+        "url": "https://inferno.healthit.gov/",
+        "before_merge": false
+      },
+      "hti5": {
+        "action": "kept"
+      },
+      "deadline": "payers' prior authorization APIs (CMS-0057-F) from 2027-01-01; HTI-4: criteria certified before 2026-08-31 are tested in calendar 2027",
+      "url": "https://www.federalregister.gov/d/2025-14681",
+      "note": "The paths are OpenEMR's prior authorization records (a form and a module), not the APIs, which core doesn't have yet.",
+      "issues": {
+        "query": "\"prior auth\" OR \"Da Vinci\""
+      },
+      "mapping": "provisional"
     },
     {
       "id": "a11y",
@@ -596,8 +721,47 @@
           "url": "https://dequeuniversity.com/rules/axe/4.10",
           "kind": "measured",
           "note": "axe-core 4.10.2 on master f4d5f8aad2, 2026-10-22; elements in the shared navigation repeat across views, so rules count, not elements"
+        },
+        {
+          "text": "Improve accessibility for visually impaired users; it names WCAG 2.1 Level AA and Section 508 as the target, without a release.",
+          "url": "https://github.com/openemr/openemr/issues/10609",
+          "kind": "issue"
+        },
+        {
+          "text": "Color contrast issues in the demo.",
+          "url": "https://github.com/openemr/openemr/issues/7904",
+          "kind": "issue"
         }
       ]
+    },
+    {
+      "id": "wcag-ui",
+      "label": "WCAG 2.1 AA",
+      "title": "Staff screens: WCAG 2.1 AA, the project's own target",
+      "certified": false,
+      "kind": "the project's target in #10609; the Section 504 rule covers patient-facing content (above)",
+      "standards": [
+        "WCAG 2.1 AA",
+        "Section 508"
+      ],
+      "paths": [
+        "interface/themes/",
+        "interface/main/tabs/"
+      ],
+      "title_re": "(?i)\\bwcag\\b|accessibilit|screen reader|colou?r contrast",
+      "tool": {
+        "name": "axe-core",
+        "url": "https://github.com/dequelabs/axe-core",
+        "before_merge": true
+      },
+      "hti5": {
+        "action": "removed",
+        "note": "(g)(5) accessibility-centered design goes under HTI-5; WCAG for staff screens stays the project's own goal"
+      },
+      "issues": {
+        "query": "accessibility OR WCAG OR contrast"
+      },
+      "mapping": "provisional"
     },
     {
       "id": "x12",
@@ -608,7 +772,8 @@
       "standards": [
         "ASC X12 005010X222A1 (837P)",
         "ASC X12 005010X223A2 (837I)",
-        "ASC X12 005010X221A1 (835)"
+        "ASC X12 005010X221A1 (835)",
+        "ASC X12 006020 275 and 277 with C-CDA 2.1 and HL7's attachments guide, for claims attachments (Federal Register 2026-05676)"
       ],
       "paths": [
         "src/Billing/X12",
@@ -616,7 +781,7 @@
         "src/Billing/EdiHistory/",
         "interface/billing/"
       ],
-      "title_re": "(?i)\\b83[57][pi]?\\b|\\bx12\\b|\\bera\\b|remittance",
+      "title_re": "(?i)\\b83[57][pi]?\\b|\\bx12\\b|\\bera\\b|remittance|claims? attachments?",
       "tool": {
         "name": "a clearinghouse's edits (no validator in CI)",
         "before_merge": false
@@ -625,7 +790,7 @@
       "issues": {
         "label": "billing & payments"
       },
-      "deadline": "claims attachments standard adopted 2026-03-24, effective 2026-05-26 (Federal Register 2026-05676); compliance dates in the rule",
+      "deadline": "claims attachments standard adopted 2026-03-24 and effective 2026-05-26; compliance due 2028-05-26 for most covered entities (Federal Register 2026-05676)",
       "url": "https://www.federalregister.gov/documents/2026/03/24/2026-05676/administrative-simplification-adoption-of-standards-for-health-care-claims-attachments-transactions",
       "known": [
         {
@@ -733,7 +898,7 @@
     },
     {
       "files": [
-        "Documentation/Configuration_Export_Import.md"
+        "Documentation/INSTALL"
       ],
       "expect": []
     },
@@ -775,6 +940,70 @@
       "expect": "found",
       "expect_files": [
         ".github/workflows/inferno-test.yml"
+      ]
+    },
+    {
+      "files": [
+        "src/Cqm/Cql/Ucum/Ucum.php"
+      ],
+      "expect": [
+        "cqm",
+        "ucum"
+      ]
+    },
+    {
+      "files": [
+        "interface/forms/vitals/save.php"
+      ],
+      "expect": [
+        "ucum"
+      ]
+    },
+    {
+      "files": [
+        "interface/forms/questionnaire_assessments/questionnaire_assessments.php"
+      ],
+      "expect": [
+        "sdc"
+      ]
+    },
+    {
+      "files": [
+        "src/Services/FHIR/Questionnaire/FhirQuestionnaireFormService.php"
+      ],
+      "expect": [
+        "g10",
+        "sdc"
+      ]
+    },
+    {
+      "files": [
+        "interface/modules/custom_modules/oe-module-prior-authorizations/src/Controller/AuthorizationService.php"
+      ],
+      "expect": [
+        "pa"
+      ]
+    },
+    {
+      "files": [
+        "interface/themes/color_base.scss"
+      ],
+      "expect": [
+        "wcag-ui"
+      ]
+    },
+    {
+      "files": [],
+      "title": "fix: send reportable lab results to public health (ELR)",
+      "expect": [
+        "pubhealth"
+      ]
+    },
+    {
+      "files": [],
+      "title": "feat: Da Vinci CRD order-select hook",
+      "expect": [
+        "pa"
       ]
     }
   ],

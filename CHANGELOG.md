@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **OpenEMR's conformance lens: the standards beyond its certified criteria.** New targets, each with its standard and version, the rule and date where one sets them, and HTI-5's proposed effect (FR 2025-23896):
+  - **SDC questionnaires** (SDC 4.0.0 on FHIR R4; the native runtime and the questionnaire services), with core's open launchContext gap (#13266);
+  - **UCUM units** (core's UCUM engine and the vitals form; #14698);
+  - **Prior authorization APIs** (g)(31)–(g)(33) (Da Vinci CRD, DTR and PAS 2.0.1; CMS-0057-F from 2027-01-01): core has no API yet, so its prior authorization records are the paths;
+  - **Staff screens at WCAG 2.1 AA**, the project's target in #10609 (themes and the main screen), beside the Section 504 entry for patient-facing pages.
+
+  Extended: (g)(10) names US Core 9.0.0 (USCDI v6) as SVAP's next step; public health names (f)(3) lab reporting, which OpenEMR has no code for (matched by title); e-prescribing gives HTI-4's 2028-01-01 dates for NCPDP SCRIPT 2023011 and (b)(4); X12 gives the claims attachments compliance date, 2028-05-26; quality measures note CMS's stated dQM path (QDM and FHIR side by side 2027–2028, FHIR only 2029–2030; not yet rules).
+- **A test checks the preset against a local OpenEMR clone** (`PR_TOOLBOX_OPENEMR`, default `~/dev/openemr`, ref `upstream/master`; skipped without one): every path matches a file on master and every control names a real file, and a planted path proves the check can fail. It found the docs-only control naming a file only an unmerged PR has; that control now uses `Documentation/INSTALL`.
+
 ## 0.8.1 (2026-10-25)
 
 Fixes found on OpenEMR's 8.5.0 branch cut, when every open PR that had added SQL to the upgrade file for 8.5.0 was suddenly adding it where no site on 8.5.0 would run it.

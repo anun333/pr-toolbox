@@ -1071,6 +1071,32 @@ class Profiles(unittest.TestCase):
         self.assertEqual(failures, [])
         self.assertTrue(all("no longer open" in n for n in notes))
 
+    def test_openemr_preset_paths_are_real_files_on_master(self) -> None:
+        """The build checks every path against the base branch; this checks the preset against a local OpenEMR
+        clone before a build, so a typo can't hide a standard (a path that matches nothing reads as "no PR touches
+        it"). Set PR_TOOLBOX_OPENEMR to the clone (default ~/dev/openemr) and PR_TOOLBOX_OPENEMR_REF to the ref."""
+        from pr_toolbox import common
+        from pr_toolbox.motion import conformance
+        repo = Path(os.environ.get("PR_TOOLBOX_OPENEMR", str(Path.home() / "dev" / "openemr")))
+        ref = os.environ.get("PR_TOOLBOX_OPENEMR_REF", "upstream/master")
+        r = subprocess.run(["git", "-C", str(repo), "ls-tree", "-r", "--name-only", ref], capture_output=True, text=True)
+        if r.returncode != 0 or not r.stdout:
+            self.skipTest(f"no OpenEMR clone with {ref} at {repo}")
+        files = r.stdout.splitlines()
+        self.assertGreater(len(files), 5000, "the clone's tree, not a stub")
+        cfg = common.load_config(Path("."), "openemr/openemr", preset="openemr")
+        target = common.Target(Path("."), "upstream", "openemr/openemr", "master", cfg)
+        conf = cli.resolve_profile(target, None)["conformance"]
+        # Only the path and file controls: CI, names and PR controls need the build's own inputs.
+        file_controls = [c for c in conf["controls"] if not ({"pr", "ci", "ci_re", "names"} & set(c))]
+        failures, _ = conformance.check({**conf, "controls": file_controls}, files, {}, {}, "")
+        self.assertEqual(failures, [])
+        missing = [f for c in file_controls for f in c.get("files", []) if f not in files]
+        self.assertEqual(missing, [], "each control's files exist, so the control tests a real change")
+        # The check can fail: a planted path that no file starts with is reported.
+        planted = {**conf, "controls": [], "specs": conf["specs"] + [{"id": "planted", "paths": ["no/such/folder/"]}]}
+        self.assertIn("planted: no file on the base branch starts with no/such/folder/", conformance.check(planted, files, {}, {}, "")[0])
+
     def test_php_src_preset_is_a_folder(self) -> None:
         from pr_toolbox import common
         self.assertEqual("php-src", common.PRESET_FOR_REPO["php/php-src"])

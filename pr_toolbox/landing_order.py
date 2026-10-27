@@ -2,11 +2,11 @@
 """Landing order: which open PRs each of your PRs conflicts with.
 
 Each open PR of yours is merged onto the base branch in memory, then test-merged with every open PR
-that changes any of the same files and still merges with the base itself. The check reports textual
-conflicts and, where the project profile defines them, version-number claims (a number every schema
-change takes) and exact-cap collisions (two PRs that each pass a pinned count alone and fail it
-together). PRs that already conflict with the base are left out: they rebase before they can land,
-and what they conflict with after that can't be known yet.
+that changes any of the same files. The check reports textual conflicts and, where the project
+profile defines them, version-number claims (a number every schema change takes) and exact-cap
+collisions (two PRs that each pass a pinned count alone and fail it together). A PR sharing files
+that no longer merges onto the base itself can't be test-merged with yours until it is rebased; the
+line names it as unchecked rather than leaving it out, since silence there read as no conflict.
 
 It reads GitHub and writes local files. Only --apply and --rewrite change anything on GitHub, and
 then only the first paragraph of your own PRs' descriptions. Nothing is ever commented, labelled or
@@ -69,8 +69,9 @@ def check(target: Target, author: str) -> dict:
                  "has_line": (pr.get("body") or "").startswith(LINE_START)}
         if commit is not None:
             for o in sharing[n]:
-                other, _ = onto_base(o)
+                other, other_base_files = onto_base(o)
                 if other is None:
+                    entry.setdefault("unchecked", {})[str(o)] = other_base_files
                     continue
                 both, files = merged(repo, commit, f"{target.remote}/pr/{o}")
                 if both is None:
@@ -114,6 +115,8 @@ def fact_key(entry: dict) -> str:
     facts = {k: entry[k] for k in ("v_database", "conflicts_with_master", "conflicts", "caps")}
     if entry.get("same_claim"):
         facts["same_claim"] = entry["same_claim"]
+    if entry.get("unchecked"):
+        facts["unchecked"] = sorted(entry["unchecked"], key=int)
     return hashlib.sha256(json.dumps(facts, sort_keys=True).encode()).hexdigest()[:12]
 
 
@@ -129,6 +132,7 @@ def sentence(n: str, entry: dict, result: dict, notes: dict) -> str:
     version = {o for o, f in conflicts.items() if is_version_conflict(f, rule)}
     same = sorted({str(o) for o in entry.get("same_claim", [])} - stacked - version, key=int)
     other = {o: f for o, f in conflicts.items() if o not in version}
+    unchecked = sorted((o for o in entry.get("unchecked", {}) if o not in stacked), key=int)
     branch = result.get("base_branch", "master")
     stamp = (f"test-merged on {result['checked'][:10]} against {result.get('base_branch', 'master')} {result['master'][:10]} "
              "and every open PR that changes any of the same files")
@@ -136,7 +140,7 @@ def sentence(n: str, entry: dict, result: dict, notes: dict) -> str:
     if entry["conflicts_with_master"]:
         parts.append(f"It no longer merges onto {branch} (in {', '.join(f'`{f}`' for f in entry['conflicts_with_master'][:4])}), "
                      "so it needs a rebase before anything else here holds; I'll rebase it.")
-    elif not conflicts and not entry["caps"] and not carries and not same:
+    elif not conflicts and not entry["caps"] and not carries and not same and not unchecked:
         parts.append("independent. No open PR conflicts with it.")
     if note.get("carries_text"):
         parts.append(note["carries_text"])
@@ -150,6 +154,8 @@ def sentence(n: str, entry: dict, result: dict, notes: dict) -> str:
         parts.append(f"It takes {noun} {entry['v_database']}, and " + ", and ".join(bits) + ", so whichever lands second needs the next one; I'll renumber this one.")
     for o, files in sorted(other.items(), key=lambda kv: int(kv[0])):
         parts.append(f"It conflicts with #{o} in {', '.join(f'`{f}`' for f in files)}. Either can land first, and if #{o} does, I'll rebase this one.")
+    for o in unchecked:
+        parts.append(f"It couldn't be test-merged with #{o}, which no longer merges onto {branch} itself, so that pair is unchecked until #{o} is rebased.")
     for o in entry["caps"]:
         parts.append(f"With #{o} it would break an exact {result.get('caps_noun', 'pinned count')} that each passes alone; whichever lands second needs it re-counted.")
     for o, files in sorted(entry["clean_with_ours"].items(), key=lambda kv: int(kv[0])):
@@ -230,11 +236,14 @@ def describe_change(n: str, previous: dict, result: dict) -> str:
     if not prev:
         what.append("new PR, no facts before")
     added = sorted(set(entry["conflicts"]) - set(prev.get("conflicts", {})), key=int)
-    gone = sorted(set(prev.get("conflicts", {})) - set(entry["conflicts"]), key=int)
+    gone = sorted(set(prev.get("conflicts", {})) - set(entry["conflicts"]) - set(entry.get("unchecked", {})), key=int)
+    unknown = sorted(set(entry.get("unchecked", {})) - set(prev.get("unchecked", {})), key=int)
     if added:
         what.append("now conflicts with " + ", ".join(f"#{o}" for o in added))
     if gone:
         what.append("no longer conflicts with " + ", ".join(f"#{o}" for o in gone))
+    if unknown:
+        what.append("can't be checked against " + ", ".join(f"#{o}" for o in unknown) + " (no longer merges onto the base)")
     if prev and bool(entry["conflicts_with_master"]) != bool(prev.get("conflicts_with_master")):
         what.append("conflicts with the base branch" if entry["conflicts_with_master"] else "merges with the base branch again")
     if prev and entry["caps"] != prev.get("caps", []):

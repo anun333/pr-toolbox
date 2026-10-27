@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **`landing`: a partner that no longer merges onto the base is named, not dropped.** A PR sharing your files that conflicts with the base itself can't be test-merged with yours, and the check used to skip it without a word. On OpenEMR, #14669's line stopped naming #14808 once #14808 stopped merging onto master, which read as the conflict having gone. The facts now keep such a partner as `unchecked` (with the files it conflicts with the base in), the line says "It couldn't be test-merged with #N, which no longer merges onto master itself, so that pair is unchecked until #N is rebased", a PR with one is no longer called independent, and `--apply` reports the change as "can't be checked against #N". Keys of PRs without one don't move, so no line is rewritten for nothing.
 - **OpenEMR's conformance lens: the standards beyond its certified criteria.** New targets, each with its standard and version, the rule and date where one sets them, and HTI-5's proposed effect (FR 2025-23896):
   - **SDC questionnaires** (SDC 4.0.0 on FHIR R4; the native runtime and the questionnaire services), with core's open launchContext gap (#13266);
   - **UCUM units** (core's UCUM engine and the vitals form; #14698);

@@ -157,7 +157,7 @@ For each of your open PRs it merges the PR onto the base branch in memory. It th
 - **Version-number claims**, when the profile has `version_claims`: which open PRs take the same number.
 - **Exact-cap collisions**, when the profile has `exact_caps`. The tool checks each merged pair against each PR alone to find pairs that pass separately and fail together.
 
-PRs that already conflict with the base branch are left out of each comparison. They have to rebase before they can land, and what they'll conflict with after that can't be known yet.
+A PR that shares your files but already conflicts with the base branch can't be test-merged with yours: it has to rebase before it can land, and what it will conflict with after that can't be known yet. The line names it as unchecked ("It couldn't be test-merged with #N, which no longer merges onto master itself") rather than leaving it out, because a pair that silently drops out reads as a conflict that went away.
 
 It writes `landing-order.md` and `landing-order.json` in the state directory (`.pr-toolbox/` by default) and prints a JSON summary. With `--if-due` it does nothing unless the base branch or one of your PR heads moved since the last check. A full check of 20 PRs against 300 open ones takes a minute or two in one process.
 

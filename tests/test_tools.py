@@ -183,6 +183,36 @@ class LandingOrderTest(unittest.TestCase):
         self.assertIn("With #5 it would break an exact PHPStan cap", line)
         self.assertIn("It shares `src/B.php` with #6", line)
 
+    def test_a_partner_that_no_longer_merges_onto_the_base_is_named_unchecked(self):
+        # #14669 and #14808 (2026-10-26): once #14808 stopped merging onto master, the pair dropped out of the
+        # check and #14669's line read as if the conflict had gone. Built here with a real repository: the
+        # partner shares our file and also conflicts with master, so it can't be test-merged with ours.
+        repo = repo_with({"a.txt": "one\n", "b.txt": "one\n"})
+        git = lambda *a: subprocess.run(["git", "-C", str(repo), *a], check=True, capture_output=True)  # noqa: E731
+        git("checkout", "-q", "-b", "ours", "master")
+        commit(repo, {"a.txt": "ours\n"}, "ours")
+        git("checkout", "-q", "-b", "partner", "master")
+        commit(repo, {"a.txt": "one\n\npartner\n", "b.txt": "partner\n"}, "partner")
+        git("checkout", "-q", "master")
+        commit(repo, {"b.txt": "master moved\n"}, "master moves")
+        for ref, branch in (("master", "master"), ("pr/1", "ours"), ("pr/2", "partner")):
+            git("update-ref", f"refs/remotes/upstream/{ref}", branch)
+        prs = [{"number": 1, "title": "ours", "author": "me", "isDraft": False, "headRefOid": "h1", "body": "", "paths": {"a.txt"}},
+               {"number": 2, "title": "partner", "author": "them", "isDraft": False, "headRefOid": "h2", "body": "", "paths": {"a.txt", "b.txt"}}]
+        target = common.Target(repo=repo, remote="upstream", github="o/r", base_branch="master", config={})
+        with mock.patch.object(landing_order, "open_prs", return_value=prs), mock.patch.object(landing_order, "fetch_prs"):
+            result = landing_order.check(target, "me")
+        facts = result["ours"]["1"]
+        self.assertEqual({"2": ["b.txt"]}, facts.get("unchecked"), "the partner is kept, with why it couldn't be checked")
+        line = landing_order.sentence("1", facts, dict(RESULT, master=result["master"]), {})
+        self.assertNotIn("independent", line)
+        self.assertIn("It couldn't be test-merged with #2, which no longer merges onto master itself, so that pair is unchecked until #2 is rebased.", line)
+        self.assertNotEqual(entry()["key"], facts["key"], "an unchecked partner changes the facts")
+        self.assertEqual(entry()["key"], entry(unchecked={})["key"], "keys of PRs without one don't move")
+        before = dict(RESULT, ours={"1": entry(conflicts={"2": ["a.txt"]})})
+        self.assertEqual("can't be checked against #2 (no longer merges onto the base)",
+                         landing_order.describe_change("1", before, dict(RESULT, ours={"1": facts})))
+
     def test_the_fact_key_ignores_the_title_and_the_check_time(self):
         self.assertEqual(entry(title="a")["key"], entry(title="b")["key"])
         self.assertNotEqual(entry()["key"], entry(conflicts={"2": ["x"]})["key"])

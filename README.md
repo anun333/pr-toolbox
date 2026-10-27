@@ -342,7 +342,7 @@ The profile has no `trailers` rules. As of 2026-10-20, `CONTRIBUTING.md` says to
 - run `landing --if-due` every hour;
 - run `landing --apply` by hand when its report shows a change you want on your PRs.
 
-The `pr_toolbox` modules can also be imported. `common.resolve()` returns the target, `landing_order.check(target, author)` returns the landing facts, and `pr_health.snapshot(github, author, ignore)` returns the health snapshot.
+The `pr_toolbox` modules can also be imported. `common.resolve()` returns the target, `landing_order.check(target, author, previous)` returns the landing facts (pass the previous facts so a partner that stopped merging onto the base is still named), and `pr_health.snapshot(github, author, ignore)` returns the health snapshot.
 
 ## Limits
 

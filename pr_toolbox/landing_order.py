@@ -4,9 +4,11 @@
 Each open PR of yours is merged onto the base branch in memory, then test-merged with every open PR
 that changes any of the same files. The check reports textual conflicts and, where the project
 profile defines them, version-number claims (a number every schema change takes) and exact-cap
-collisions (two PRs that each pass a pinned count alone and fail it together). A PR sharing files
-that no longer merges onto the base itself can't be test-merged with yours until it is rebased; the
-line names it as unchecked rather than leaving it out, since silence there read as no conflict.
+collisions (two PRs that each pass a pinned count alone and fail it together). A PR that no longer
+merges onto the base itself can't be test-merged with yours until it is rebased, so it is left out,
+with one exception: a partner that conflicted with yours at the previous check and has since stopped
+merging onto the base is named as unchecked, because dropping it would read as the conflict having
+gone. Partners that were already stale are never listed: in a large repository there are many.
 
 It reads GitHub and writes local files. Only --apply and --rewrite change anything on GitHub, and
 then only the first paragraph of your own PRs' descriptions. Nothing is ever commented, labelled or
@@ -37,7 +39,12 @@ class Paths:
         self.report = Path(report).expanduser() if report else self.state / "landing-order.md"
 
 
-def check(target: Target, author: str) -> dict:
+# Facts from 0.8.3 on mark that their "unchecked" partners follow the narrow rule above; 0.8.2's listed
+# every stale partner, so its unchecked lists are not carried forward.
+UNCHECKED_RULE = 2
+
+
+def check(target: Target, author: str, previous: dict | None = None) -> dict:
     repo, base_ref = target.repo, target.base
     versions, caps_rule = target.config.get("version_claims"), target.config.get("exact_caps")
     noise = set((versions or {}).get("related", [])) | ({caps_rule["file"]} if caps_rule else set())
@@ -60,8 +67,12 @@ def check(target: Target, author: str) -> dict:
         return set(caps_mismatches(repo, commit, caps_rule)) - base_caps
 
     facts: dict[str, dict] = {}
+    previous = previous or {}
+    carry_unchecked = previous.get("unchecked_rule") == UNCHECKED_RULE
     for pr in ours:
         n = pr["number"]
+        before = (previous.get("ours") or {}).get(str(n)) or {}
+        known = set(before.get("conflicts") or {}) | (set(before.get("unchecked") or {}) if carry_unchecked else set())
         commit, base_conflicts = onto_base(n)
         entry = {"title": pr["title"], "draft": pr["isDraft"], "head": pr["headRefOid"],
                  "v_database": version_claim(repo, f"{target.remote}/pr/{n}", versions) if n in version_prs else None,
@@ -71,7 +82,8 @@ def check(target: Target, author: str) -> dict:
             for o in sharing[n]:
                 other, other_base_files = onto_base(o)
                 if other is None:
-                    entry.setdefault("unchecked", {})[str(o)] = other_base_files
+                    if str(o) in known:  # it conflicted with this PR before; silence would read as resolved
+                        entry.setdefault("unchecked", {})[str(o)] = other_base_files
                     continue
                 both, files = merged(repo, commit, f"{target.remote}/pr/{o}")
                 if both is None:
@@ -98,7 +110,7 @@ def check(target: Target, author: str) -> dict:
             entry["same_claim"] = same
             entry["key"] = fact_key(entry)
     return {"checked": datetime.now(timezone.utc).isoformat(timespec="seconds"), "master": base, "base_branch": target.base_branch,
-            "github": target.github, "author": author, "open_prs": len(prs), "ours": facts,
+            "github": target.github, "author": author, "open_prs": len(prs), "ours": facts, "unchecked_rule": UNCHECKED_RULE,
             "v_database_claims": dict(sorted(claims.items(), key=lambda kv: int(kv[0]))),
             "version_noun": (versions or {}).get("noun", "version number"), "version_file": (versions or {}).get("file", ""),
             "version_related": (versions or {}).get("related", []),
@@ -287,7 +299,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.if_due and not due(target, previous, author):
         print(json.dumps({"due": False}))
         return 0
-    result = check(target, author)
+    result = check(target, author, previous)
     changed = changes(previous, result)
     missing = [n for n, e in result["ours"].items() if not e["has_line"]]
     applied = rewrite(sorted(set(changed) | set(missing), key=int), result, notes, paths.state, target.github) if args.apply else []

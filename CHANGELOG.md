@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.3 (2026-10-27)
+
+0.8.2's unchecked partners, narrowed after they reached real PR descriptions.
+
+- **`landing`: only a partner that conflicted with yours at the previous check is named unchecked.** 0.8.2 named every PR sharing your files that no longer merges onto the base. In a large repository most of those have been stale for months: on OpenEMR, `--apply` wrote a dozen of them into each of 16 descriptions, which were then put back with 0.8.1. A partner that conflicted with your PR at the previous check and has since stopped merging onto the base is still named (#14669 and #14808, the case 0.8.2 was for), and stays named while it stays stale. Partners that were already stale are left out, as in 0.8.1, so their facts and keys match 0.8.1's and no line is rewritten for them. `check()` takes the previous facts for this; the facts record `unchecked_rule`, and 0.8.2's unchecked lists, which lack it, aren't carried forward.
+
 ## 0.8.2 (2026-10-27)
 
 A landing line that read clean when it wasn't, and OpenEMR's conformance lens widened past the certified criteria.

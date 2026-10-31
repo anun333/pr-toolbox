@@ -288,6 +288,14 @@ def main(argv: list[str] | None = None) -> int:
         if not args.json:
             print(f"{status.upper():5} {name:14} {detail}", flush=True)
     failed = [r["step"] for r in results if r["status"] == "fail"]
+    if not check.changed:
+        # No file changed against the base means no step checked anything: that is a failure, not a pass. (Seen
+        # 2026-10-31: --repo on the main checkout with --worktree beside it skipped every step and "passed".)
+        detail = f"no file changed against {target.base} in {args.repo}: nothing was checked (for a branch in a worktree, give --repo the worktree)"
+        results.append({"step": "nothing", "status": "fail", "detail": detail})
+        failed.append("nothing")
+        if not args.json:
+            print(f"FAIL  {'nothing':14} {detail}", flush=True)
     if args.json:
         print(json.dumps({"github": target.github, "base": target.base, "changed": check.changed, "results": results, "failed": failed}, indent=1))
     else:
